@@ -125,7 +125,7 @@ test('extracts items from the real SearchResultsPlacements placements structure'
 test('normalizes every item extracted from the real placements response', () => {
   const placements = PLACEMENTS_FIXTURE.data.searchResultsPlacements.placements;
   const items = extractItemsFromPlacements(placements);
-  const products = items.map(normalizeAldiProduct).filter(p => p !== null);
+  const products = items.map(item => normalizeAldiProduct(item)).filter(p => p !== null);
 
   assert.ok(products.length > 0);
   for (const p of products) {
@@ -145,22 +145,15 @@ test('extractItemsFromPlacements handles undefined placements safely', () => {
 });
 
 // ── searchAldi() configuration guards ────────────────────────────────────────
-// Note: session-cookie acquisition is no longer a manual env var — it's
-// established automatically via a live HTTP call (see aldiLiveScraper.ts),
-// so it isn't covered by these fixture-only, network-free tests.
+// Note: the store location (shopId) is no longer a manual env var — it's
+// resolved per-ZIP from Aldi's own store-locator endpoint (see
+// locators/aldiLocator.ts), so that resolution isn't covered by these
+// fixture-only, network-free tests. The one guard that's still a pure,
+// network-free precondition is requiring a postal code at all.
 
-test('searchAldi throws a clear error when shopId/zoneId are unset', async () => {
-  const prevShop = process.env.ALDI_DEFAULT_SHOP_ID;
-  const prevZone = process.env.ALDI_DEFAULT_ZONE_ID;
-  delete process.env.ALDI_DEFAULT_SHOP_ID;
-  delete process.env.ALDI_DEFAULT_ZONE_ID;
-  try {
-    await assert.rejects(
-      () => searchAldi('eggs'),
-      /ALDI_DEFAULT_SHOP_ID/,
-    );
-  } finally {
-    if (prevShop !== undefined) process.env.ALDI_DEFAULT_SHOP_ID = prevShop;
-    if (prevZone !== undefined) process.env.ALDI_DEFAULT_ZONE_ID = prevZone;
-  }
+test('searchAldi throws a clear error when no postal code is given', async () => {
+  await assert.rejects(
+    () => searchAldi('eggs'),
+    /postal code is required/,
+  );
 });

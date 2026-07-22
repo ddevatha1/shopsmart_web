@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { User, CartItem } from '@/types';
+import { useUserStore } from '@/store/userStore';
 
 interface ProfileTrayProps {
   isOpen: boolean;
@@ -25,6 +26,72 @@ function AvatarCircle({ name }: { name: string }) {
   );
 }
 
+/** A saved-value row that's a plain display until clicked, then becomes an
+ * inline edit form — direct port of shopsmart_mobile ProfileScreen's
+ * ZipCodeRow/BudgetRow pattern (unified into one generic component since
+ * both share the exact same edit/save/cancel shape). */
+function EditableRow({
+  label, value, placeholder, onSave, validate, keyboardFilter,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onSave: (draft: string) => void;
+  validate: (draft: string) => boolean;
+  keyboardFilter: (raw: string) => string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  if (editing) {
+    return (
+      <div className="bg-gray-50 rounded-2xl px-4 py-3">
+        <span className="text-[#1A1A1A]/60 text-sm">{label}</span>
+        <div className="flex items-center gap-2 mt-2">
+          <input
+            autoFocus
+            value={draft}
+            onChange={e => setDraft(keyboardFilter(e.target.value))}
+            placeholder={placeholder}
+            className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-[#1A1A1A] bg-white focus:outline-none focus:border-[#2C742F]"
+          />
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            className="text-[#1A1A1A]/60 text-sm font-medium px-1"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!validate(draft)}
+            onClick={() => { onSave(draft); setEditing(false); }}
+            className="text-[#2C742F] text-sm font-bold px-1 disabled:opacity-40"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => { setDraft(value); setEditing(true); }}
+      className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 rounded-2xl hover:bg-gray-100 transition-colors text-left"
+    >
+      <span className="text-[#1A1A1A]/60 text-sm">{label}</span>
+      <span className="flex items-center gap-1.5 text-[#1A1A1A] text-sm font-semibold">
+        {value || '—'}
+        <svg className="w-3 h-3 text-[#1A1A1A]/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+        </svg>
+      </span>
+    </button>
+  );
+}
+
 export default function ProfileTray({
   isOpen,
   onClose,
@@ -32,6 +99,9 @@ export default function ProfileTray({
   cartItems,
   onSignOut,
 }: ProfileTrayProps) {
+  const updateZipcode = useUserStore(s => s.updateZipcode);
+  const updateBudget = useUserStore(s => s.updateBudget);
+
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -65,7 +135,6 @@ export default function ProfileTray({
           isOpen ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
-        {/* Header strip */}
         <div className="bg-[#2C742F] px-6 pt-10 pb-6">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-4">
@@ -87,14 +156,12 @@ export default function ProfileTray({
           </div>
         </div>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
-          {/* Account info */}
           <section>
             <h3 className="text-[#1A1A1A]/50 text-xs font-semibold uppercase tracking-wider mb-3">
               Account
             </h3>
-            <div className="bg-gray-50 rounded-2xl divide-y divide-gray-100">
+            <div className="bg-gray-50 rounded-2xl divide-y divide-gray-100 mb-2">
               <div className="flex items-center justify-between px-4 py-3">
                 <span className="text-[#1A1A1A]/60 text-sm">Name</span>
                 <span className="text-[#1A1A1A] text-sm font-semibold">{user.name}</span>
@@ -103,14 +170,27 @@ export default function ProfileTray({
                 <span className="text-[#1A1A1A]/60 text-sm">Email</span>
                 <span className="text-[#1A1A1A] text-sm font-semibold truncate max-w-[160px]">{user.email}</span>
               </div>
-              <div className="flex items-center justify-between px-4 py-3">
-                <span className="text-[#1A1A1A]/60 text-sm">Home ZIP</span>
-                <span className="text-[#1A1A1A] text-sm font-semibold">{user.zipcode || '—'}</span>
-              </div>
+            </div>
+            <div className="space-y-2">
+              <EditableRow
+                label="Home ZIP"
+                value={user.zipcode}
+                placeholder="78701"
+                validate={draft => /^\d{5}$/.test(draft)}
+                keyboardFilter={raw => raw.replace(/\D/g, '').slice(0, 5)}
+                onSave={draft => updateZipcode(draft)}
+              />
+              <EditableRow
+                label="Weekly Budget"
+                value={user.weeklyBudget != null ? `$${user.weeklyBudget.toFixed(0)}` : ''}
+                placeholder="e.g. 90"
+                validate={draft => draft === '' || (Number.isFinite(parseFloat(draft)) && parseFloat(draft) > 0)}
+                keyboardFilter={raw => raw.replace(/[^0-9.]/g, '')}
+                onSave={draft => updateBudget(draft === '' ? null : parseFloat(draft))}
+              />
             </div>
           </section>
 
-          {/* Active cart summary */}
           <section>
             <h3 className="text-[#1A1A1A]/50 text-xs font-semibold uppercase tracking-wider mb-3">
               Active Cart
@@ -136,7 +216,6 @@ export default function ProfileTray({
             )}
           </section>
 
-          {/* Search history */}
           <section>
             <h3 className="text-[#1A1A1A]/50 text-xs font-semibold uppercase tracking-wider mb-3">
               Recent Searches
@@ -157,7 +236,6 @@ export default function ProfileTray({
             )}
           </section>
 
-          {/* Saved config */}
           <section>
             <h3 className="text-[#1A1A1A]/50 text-xs font-semibold uppercase tracking-wider mb-3">
               Preferences
@@ -174,7 +252,6 @@ export default function ProfileTray({
           </section>
         </div>
 
-        {/* Footer */}
         <div className="border-t border-gray-100 px-6 py-5 space-y-3">
           <button
             onClick={() => {
@@ -186,7 +263,7 @@ export default function ProfileTray({
             Sign Out
           </button>
           <p className="text-center text-[#1A1A1A]/30 text-xs">
-            ShopSmart &mdash; Compare grocery prices across 5 stores
+            ShopSmart &mdash; Compare grocery prices across 4 stores
           </p>
         </div>
       </aside>

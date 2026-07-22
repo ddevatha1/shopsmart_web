@@ -11,17 +11,18 @@
  *   3. Map results to ApiProduct[], keeping only actual grocery items
  */
 
-import { chromium } from 'playwright';
-import type { Browser, BrowserContext } from 'playwright';
+import { chromium, request } from 'playwright';
+import type { APIRequestContext, Browser, BrowserContext } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
-import { ApiProduct } from '@/types';
+import type { ApiProduct, StoreLocation } from '@/types';
 import { hashCode } from '@/utils/textFormat';
 import { withTimeout } from '@/utils/withTimeout';
 import { TtlCache } from '@/utils/ttlCache';
+import { dedupeInFlight } from '@/utils/dedupeInFlight';
+import { createTraderJoesLocator, warmDirectory as warmTraderJoesDirectory } from '@/services/locators/traderJoesLocator';
 
 const TJ_GRAPHQL_URL = 'https://www.traderjoes.com/api/graphql';
-const DEFAULT_STORE_CODE = '410';
 const SESSION_PATH = path.join(process.cwd(), '.traderjoes-session.json');
 
 const SEARCH_QUERY = `
@@ -67,6 +68,11 @@ query SearchProducts(
 // In-memory cache — 5 min TTL per query
 const resultCache = new TtlCache<ApiProduct[]>(5 * 60 * 1000);
 
+// ── Store locator ─────────────────────────────────────────────────────────────
+// See locators/traderJoesLocator.ts — resolves the nearest real Trader
+// Joe's store for a shopper's ZIP from their real, public store directory.
+const traderJoesLocator = createTraderJoesLocator();
+
 // ── Raw GraphQL response shapes (only fields we consume) ──────────────────
 interface TJCategory {
   name: string;
@@ -108,7 +114,7 @@ function toSizePart(v: string | number | null | undefined): string {
   return String(v).trim();
 }
 
-function mapTJItem(item: TJItem): ApiProduct | null {
+function mapTJItem(item: TJItem, location: StoreLocation | undefined): ApiProduct | null {
   const name = item.item_title?.trim();
   if (!name) return null;
 
@@ -133,6 +139,7 @@ function mapTJItem(item: TJItem): ApiProduct | null {
     size,
     isLiveData: true,
     store: "Trader Joe's",
+    location,
     inStock: true,
   };
 }
@@ -144,11 +151,13 @@ async function stealthContext(context: BrowserContext): Promise<void> {
   });
 }
 
+const DESKTOP_USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
+
 async function buildContext(browser: Browser): Promise<BrowserContext> {
   const baseOpts = {
-    userAgent:
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
-      '(KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
+    userAgent: DESKTOP_USER_AGENT,
     viewport: { width: 1280, height: 800 },
     locale: 'en-US',
   };
@@ -161,43 +170,56 @@ async function buildContext(browser: Browser): Promise<BrowserContext> {
   return await browser.newContext(baseOpts);
 }
 
-// ── Main search function ──────────────────────────────────────────────────────
-export async function searchTraderJoes(
-  query: string,
-  storeCode: string = DEFAULT_STORE_CODE,
-): Promise<ApiProduct[]> {
-  const cacheKey = `${query.toLowerCase().trim()}|${storeCode}`;
-  const cached = resultCache.get(cacheKey);
-  if (cached) {
-    console.log(`[TraderJoes] Cache hit for "${query}"`);
-    return cached;
+/** A plain HTTP client sharing the persisted session cookie, with no
+ * browser process behind it — used by searchTraderJoes for the actual
+ * GraphQL request, which needs cookies but never needs to render a page or
+ * run JS. Launching a full headless Chromium (multi-second cold start) just
+ * to issue one authenticated POST was the single biggest first-search cost
+ * in the app; this removes it from every search, not just the first. */
+async function buildApiRequestContext(): Promise<APIRequestContext> {
+  const baseOpts = { userAgent: DESKTOP_USER_AGENT };
+  if (fs.existsSync(SESSION_PATH)) {
+    try {
+      return await request.newContext({ ...baseOpts, storageState: SESSION_PATH });
+    } catch { /* fall through */ }
   }
+  return await request.newContext(baseOpts);
+}
 
-  console.log(`[TraderJoes] Live fetch for "${query}"`);
+// Launches its own short-lived browser purely to visit the storefront and
+// persist session cookies to SESSION_PATH — a no-op once that file already
+// exists. Factored out of searchTraderJoes so this one-time cost (the
+// ~3-30s storefront visit) can be paid during app-startup warm-up instead
+// of during a shopper's first real search; searchTraderJoes still calls
+// this itself as a fallback in case warm-up hasn't finished (or hasn't run
+// at all) by the time a search arrives, so behavior is unchanged either way.
+// Wrapped in dedupeInFlight so a racing warm-up and a shopper's first real
+// search — both finding no session file at the same instant — share one
+// browser launch instead of each starting their own.
+async function establishSessionIfNeeded(): Promise<void> {
+  if (fs.existsSync(SESSION_PATH)) return;
 
-  let browser: Browser | null = null;
+  await dedupeInFlight('trader-joes-session', async () => {
+    if (fs.existsSync(SESSION_PATH)) return;
 
-  try {
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        '--disable-blink-features=AutomationControlled',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-      ],
-    });
+    console.log('[TraderJoes] No session — visiting storefront first');
+    let browser: Browser | null = null;
+    try {
+      browser = await chromium.launch({
+        headless: true,
+        args: [
+          '--disable-blink-features=AutomationControlled',
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--no-first-run',
+        ],
+      });
 
-    const context = await buildContext(browser);
-    await stealthContext(context);
+      const context = await buildContext(browser);
+      await stealthContext(context);
 
-    const hasSession = fs.existsSync(SESSION_PATH);
-
-    if (!hasSession) {
-      // No cached session — visit the storefront first to establish cookies.
-      console.log('[TraderJoes] No session — visiting storefront first');
       const page = await context.newPage();
       await page.goto('https://www.traderjoes.com/home/products', {
         waitUntil: 'networkidle',
@@ -205,10 +227,46 @@ export async function searchTraderJoes(
       });
       await page.waitForTimeout(3000);
       await page.close();
-    }
 
-    // GraphQL request shares cookies with the browser context above.
-    const response = await context.request.post(TJ_GRAPHQL_URL, {
+      await context.storageState({ path: SESSION_PATH });
+    } finally {
+      if (browser) await browser.close().catch(() => {});
+    }
+  });
+}
+
+// ── Main search function ──────────────────────────────────────────────────────
+export async function searchTraderJoes(
+  query: string,
+  zip: string,
+): Promise<ApiProduct[]> {
+  const storeLocation = await traderJoesLocator.findNearestStore(zip);
+  if (!storeLocation?.storeId) {
+    console.log(`[TraderJoes] No Trader Joe's location found near ${zip}`);
+    return [];
+  }
+  const storeCode = storeLocation.storeId;
+
+  const cacheKey = `${query.toLowerCase().trim()}|${storeCode}`;
+  const cached = resultCache.get(cacheKey);
+  if (cached) {
+    console.log(`[TraderJoes] Cache hit for "${query}"`);
+    return cached;
+  }
+
+  console.log(`[TraderJoes] Live fetch for "${query}" @ zip ${zip}, store ${storeCode} (${storeLocation.name})`);
+
+  // No-op if warm-up (or an earlier search) already established a session.
+  await establishSessionIfNeeded();
+
+  // A plain HTTP client sharing the persisted session cookie — no browser
+  // process, no page render. Only session *establishment* (above) ever
+  // needs a real browser; the search request itself is just an
+  // authenticated POST.
+  const apiContext = await buildApiRequestContext();
+
+  try {
+    const response = await apiContext.post(TJ_GRAPHQL_URL, {
       data: {
         operationName: 'SearchProducts',
         query: SEARCH_QUERY,
@@ -242,35 +300,51 @@ export async function searchTraderJoes(
 
     // Save/refresh session for next time.
     try {
-      await context.storageState({ path: SESSION_PATH });
+      await apiContext.storageState({ path: SESSION_PATH });
     } catch { /* non-fatal */ }
-
-    await browser.close();
-    browser = null;
 
     const items = json.data?.products?.items ?? [];
     console.log(`[TraderJoes] Raw: ${items.length} items from API`);
 
     const products = items
       .filter(isFoodItem)
-      .map(mapTJItem)
+      .map(item => mapTJItem(item, storeLocation))
       .filter((p): p is ApiProduct => p !== null);
 
     console.log(`[TraderJoes] ${products.length} mapped products for "${query}"`);
+    // Debug output — trace the ZIP → store → product-count pipeline at a glance.
+    console.log(
+      `[TraderJoes][debug] zip=${zip} -> store="${storeLocation.name}" id=${storeCode} ` +
+        `address="${storeLocation.address}, ${storeLocation.city}, ${storeLocation.state} ${storeLocation.zip}" ` +
+        `lat=${storeLocation.latitude ?? '?'} lng=${storeLocation.longitude ?? '?'} products=${products.length}`,
+    );
     resultCache.set(cacheKey, products);
     return products;
   } catch (err) {
-    if (browser) await browser.close().catch(() => {});
     throw new Error(
       `Trader Joe's scraper failed: ${err instanceof Error ? err.message : String(err)}`,
     );
+  } finally {
+    await apiContext.dispose().catch(() => {});
   }
 }
 
 // ── Timeout wrapper ───────────────────────────────────────────────────────────
 export function searchTraderJoesWithTimeout(
   query: string,
+  zip: string,
   timeoutMs: number,
 ): Promise<ApiProduct[]> {
-  return withTimeout(searchTraderJoes(query), timeoutMs, "Trader Joe's search");
+  return withTimeout(searchTraderJoes(query, zip), timeoutMs, "Trader Joe's search");
+}
+
+// ── Warm-up ────────────────────────────────────────────────────────────────
+// The single biggest first-search cost in the whole app: establishing the
+// session (launching a headless browser to visit the storefront, ~3-30s)
+// at app-startup time instead of on the first real search. Also warms the
+// zip-independent store directory (see traderJoesLocator.ts's warmDirectory)
+// and, once a zip is known, the nearest-store lookup itself.
+export async function warmTraderJoes(zip?: string): Promise<void> {
+  await Promise.all([establishSessionIfNeeded(), warmTraderJoesDirectory()]);
+  if (zip) await traderJoesLocator.findNearestStore(zip);
 }

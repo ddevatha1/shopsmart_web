@@ -7,83 +7,63 @@
  *   3. Products API → real prices for up to 50 products (cached 5 min)
  */
 
-import type { ApiProduct } from '@/types';
+import type { ApiProduct, StoreLocation } from '@/types';
 import { toTitleCase, hashCode } from '@/utils/textFormat';
 import { withTimeout } from '@/utils/withTimeout';
 import { TtlCache } from '@/utils/ttlCache';
+import { dedupeInFlight } from '@/utils/dedupeInFlight';
+import { createKrogerLocator } from '@/services/locators/krogerLocator';
 
 const KROGER_API = 'https://api.kroger.com/v1';
 
 // ── Token cache ───────────────────────────────────────────────────────────────
 let tokenCache: { token: string; expiresAt: number } | null = null;
 
+// Deduped so a racing warm-up and a shopper's first real search — both
+// finding an expired/empty token cache at the same instant — share one
+// OAuth request instead of each firing its own.
 async function getToken(): Promise<string> {
   if (tokenCache && Date.now() < tokenCache.expiresAt) return tokenCache.token;
 
-  const clientId = process.env.KROGER_CLIENT_ID;
-  const clientSecret = process.env.KROGER_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
-    throw new Error(
-      'Kroger auth failed: KROGER_CLIENT_ID / KROGER_CLIENT_SECRET are not set (check .env.local).',
-    );
-  }
+  return dedupeInFlight('kroger-token', async () => {
+    if (tokenCache && Date.now() < tokenCache.expiresAt) return tokenCache.token;
 
-  const creds = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+    const clientId = process.env.KROGER_CLIENT_ID;
+    const clientSecret = process.env.KROGER_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      throw new Error(
+        'Kroger auth failed: KROGER_CLIENT_ID / KROGER_CLIENT_SECRET are not set (check .env.local).',
+      );
+    }
 
-  const res = await fetch(`${KROGER_API}/connect/oauth2/token`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${creds}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: 'grant_type=client_credentials&scope=product.compact',
-    cache: 'no-store',
-  });
+    const creds = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Kroger auth failed (${res.status}): ${text.slice(0, 200)}`);
-  }
-
-  const json = await res.json();
-  const ttl = (json.expires_in ?? 1800) - 60; // 1-min safety buffer
-  tokenCache = { token: json.access_token, expiresAt: Date.now() + ttl * 1000 };
-  return tokenCache.token;
-}
-
-// ── Location cache ────────────────────────────────────────────────────────────
-const locationCache = new TtlCache<string>(60 * 60 * 1000); // 1 hour
-
-async function getLocationId(zipcode: string, token: string): Promise<string | null> {
-  const cached = locationCache.get(zipcode);
-  if (cached) return cached;
-
-  // Try progressively wider radii so zip codes with no Kroger still find one
-  for (const radius of [15, 30, 50]) {
-    const url = new URL(`${KROGER_API}/locations`);
-    url.searchParams.set('filter.zipCode', zipcode);
-    url.searchParams.set('filter.radiusInMiles', String(radius));
-    url.searchParams.set('filter.limit', '5');
-
-    const res = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    const res = await fetch(`${KROGER_API}/connect/oauth2/token`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${creds}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: 'grant_type=client_credentials&scope=product.compact',
       cache: 'no-store',
     });
 
-    if (!res.ok) break;
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Kroger auth failed (${res.status}): ${text.slice(0, 200)}`);
+    }
 
     const json = await res.json();
-    const locations = (json.data ?? []) as Array<{ locationId: string }>;
-    if (locations.length > 0) {
-      const id = locations[0].locationId;
-      locationCache.set(zipcode, id);
-      console.log(`[Kroger] locationId=${id} (radius=${radius}mi, zip=${zipcode})`);
-      return id;
-    }
-  }
-
-  return null;
+    const ttl = (json.expires_in ?? 1800) - 60; // 1-min safety buffer
+    tokenCache = { token: json.access_token, expiresAt: Date.now() + ttl * 1000 };
+    return tokenCache.token;
+  });
 }
+
+// ── Store locator ─────────────────────────────────────────────────────────────
+// See locators/krogerLocator.ts — resolves the nearest real Kroger location
+// via Kroger's own Locations API and ranks candidates by actual distance.
+const krogerLocator = createKrogerLocator(getToken);
 
 // ── Product result cache ──────────────────────────────────────────────────────
 const productCache = new TtlCache<ApiProduct[]>(5 * 60 * 1000); // 5 min
@@ -129,7 +109,7 @@ function getBestImageUrl(images?: KrogerImage[]): string | undefined {
   return sizes[0]?.url;
 }
 
-function mapKrogerProduct(p: KrogerProduct): ApiProduct | null {
+function mapKrogerProduct(p: KrogerProduct, location: StoreLocation | undefined): ApiProduct | null {
   const description = stripTrademarks(p.description ?? '').trim();
   if (!description) return null;
 
@@ -160,6 +140,7 @@ function mapKrogerProduct(p: KrogerProduct): ApiProduct | null {
     size: item?.size ?? '',
     isLiveData: true,
     store: 'Kroger',
+    location,
     inStock: true,
   };
 }
@@ -179,16 +160,16 @@ export async function searchKroger(
   console.log(`[Kroger] Live fetch for "${query}" @ ${zipcode}`);
 
   const token = await getToken();
-  const locationId = await getLocationId(zipcode, token);
+  const storeLocation = await krogerLocator.findNearestStore(zipcode);
 
-  if (!locationId) {
+  if (!storeLocation) {
     console.log(`[Kroger] No Kroger location found near ${zipcode}`);
     return [];
   }
 
   const url = new URL(`${KROGER_API}/products`);
   url.searchParams.set('filter.term', query);
-  url.searchParams.set('filter.locationId', locationId);
+  url.searchParams.set('filter.locationId', storeLocation.storeId!);
   url.searchParams.set('filter.limit', '50');
 
   const res = await fetch(url.toString(), {
@@ -206,10 +187,17 @@ export async function searchKroger(
   console.log(`[Kroger] Raw: ${raw.length} products from API`);
 
   const products = raw
-    .map(mapKrogerProduct)
+    .map(p => mapKrogerProduct(p, storeLocation))
     .filter((p): p is ApiProduct => p !== null);
 
   console.log(`[Kroger] ${products.length} mapped products for "${query}"`);
+  // Debug output — trace the ZIP → store → product-count pipeline at a glance.
+  console.log(
+    `[Kroger][debug] zip=${zipcode} -> store="${storeLocation.name}" ` +
+      `id=${storeLocation.storeId} address="${storeLocation.address}, ${storeLocation.city}, ` +
+      `${storeLocation.state} ${storeLocation.zip}" ` +
+      `lat=${storeLocation.latitude ?? '?'} lng=${storeLocation.longitude ?? '?'} products=${products.length}`,
+  );
   productCache.set(cacheKey, products);
   return products;
 }
@@ -221,4 +209,17 @@ export function searchKrogerWithTimeout(
   timeoutMs: number,
 ): Promise<ApiProduct[]> {
   return withTimeout(searchKroger(query, zipcode), timeoutMs, 'Kroger search');
+}
+
+// ── Warm-up ────────────────────────────────────────────────────────────────
+// Pays the OAuth2 token round-trip (and, once a zip is known, the nearest-
+// store lookup) at app-startup time instead of on the first real search —
+// both populate the same module-level caches `searchKroger` already checks,
+// so this is purely additive: skipping it changes nothing except which
+// request pays the cost. Safe to call repeatedly (each piece is itself
+// idempotent once its cache is warm) and never throws — the caller decides
+// whether a failed warm-up is worth logging.
+export async function warmKroger(zip?: string): Promise<void> {
+  await getToken();
+  if (zip) await krogerLocator.findNearestStore(zip);
 }

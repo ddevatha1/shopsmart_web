@@ -1,3 +1,23 @@
+export const STORE_NAMES = ["Trader Joe's", 'Sprouts', 'Kroger', 'Aldi'] as const;
+export type StoreName = (typeof STORE_NAMES)[number];
+
+/** The specific physical store a product listing came from — standardized
+ * across all four store adapters (see krogerLiveScraper.ts,
+ * traderJoesLiveScraper.ts, sproutsLiveScraper.ts, aldiLiveScraper.ts for how
+ * each one obtains this). `latitude`/`longitude` are omitted when a store's
+ * own API only provides an address — routes/trip.ts geocodes it before
+ * route-planning in that case, rather than failing the stop outright. */
+export interface StoreLocation {
+  name: string;
+  storeId?: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  latitude?: number;
+  longitude?: number;
+}
+
 export interface ApiProduct {
   id: string;
   name: string;
@@ -15,12 +35,17 @@ export interface ApiProduct {
   pricePerUnit?: string;
   store: "Trader Joe's" | 'Sprouts' | 'Kroger' | 'Aldi';
   storeProductUrl?: string;
+  location?: StoreLocation;
   inStock?: boolean;
   pickupAvailable?: boolean;
   deliveryAvailable?: boolean;
   inStoreAvailable?: boolean;
   category?: string;
   aisle?: string;
+  /** Set by /api/search's relevance classifier: 'direct' when the query
+   * names the product itself, 'related' when the query only appears as an
+   * ingredient/flavor/component (see app/api/search/route.ts's classifyMatch). */
+  matchType?: 'direct' | 'related';
 }
 
 export interface CartItem {
@@ -34,6 +59,10 @@ export interface User {
   email: string;
   zipcode: string;
   searchHistory: string[];
+  /** Optional, shopper-set weekly grocery budget — used only to subtly
+   * surface budget standing in the Cart's Advisor slot. Absent for most
+   * accounts. */
+  weeklyBudget?: number;
 }
 
 export interface SearchRequest {
@@ -48,7 +77,85 @@ export interface StoreStatus {
   error?: string;
 }
 
+/** Set on the response only when the query pipeline (see
+ * services/queryCorrection.ts) found a typo/spelling correction worth
+ * surfacing — omitted entirely for an already-correct or unrecognized
+ * query, never present with a 'none' level. */
+export interface QueryCorrectionInfo {
+  original: string;
+  corrected: string;
+  confidence: number;
+  level: 'moderate' | 'high';
+}
+
 export interface SearchResponse {
   products: ApiProduct[];
   storeStatuses: StoreStatus[];
+  correction?: QueryCorrectionInfo;
+}
+
+// ── Route planning ────────────────────────────────────────────────────────
+
+/** Where the trip starts — real GPS coordinates when available, otherwise
+ * a ZIP code the backend geocodes to a center point. Never a fabricated
+ * default location. */
+export interface TripOrigin {
+  latitude?: number;
+  longitude?: number;
+  zipcode?: string;
+}
+
+export interface TripRequest {
+  origin: TripOrigin;
+  /** One entry per physical store the cart needs to visit — the caller
+   * (frontend) is expected to have already grouped cart items by
+   * StoreLocation; the backend also defensively de-duplicates by address
+   * in case it hasn't. */
+  stops: StoreLocation[];
+}
+
+export interface TripStop {
+  location: StoreLocation;
+  /** Driving time/distance for the leg arriving at this stop — from the
+   * origin for the first stop, from the previous stop otherwise. Always
+   * computed by the routing engine, never estimated. */
+  legDurationMinutes: number;
+  legDistanceMiles: number;
+  /** Minutes from trip start until arrival at this stop. */
+  cumulativeEtaMinutes: number;
+  /** The first driving instruction of this leg (e.g. "Turn left onto Main
+   * St"), when the routing engine's step data includes a readable street
+   * name — omitted rather than shown as a placeholder otherwise. */
+  nextManeuver?: string;
+}
+
+export interface TripPlan {
+  /** The resolved starting point — echoed back so the frontend always has
+   * a concrete coordinate to render as the trip's start, whether it came
+   * from real GPS or a geocoded ZIP-code fallback. */
+  origin: { latitude: number; longitude: number };
+  totalDurationMinutes: number;
+  totalDistanceMiles: number;
+  /** [longitude, latitude] pairs tracing the full driving route, in visit
+   * order — GeoJSON LineString coordinate order, straight from the routing
+   * engine (never a straight-line approximation between stops). */
+  routeGeometry: { type: 'LineString'; coordinates: [number, number][] };
+  /** In optimized visit order — never simply cart order. */
+  stops: TripStop[];
+  /** Stops the caller sent that could NOT be routed to — their store had no
+   * usable coordinates and no geocoder result for its address either. Named
+   * explicitly rather than silently dropped from `stops`, so the frontend
+   * can tell the shopper exactly which store (and therefore which cart
+   * items) couldn't be included, instead of the trip just quietly having
+   * one fewer stop than the cart implied. */
+  unresolvedStops?: StoreLocation[];
+}
+
+/** One physical store's worth of a shopper's cart — the frontend-only
+ * grouping step between "cart" and "trip request." Not sent to the backend
+ * as-is; `items` stays on-device for rendering the pick-up checklist, only
+ * `location` is sent as a stop. */
+export interface StoreGroup {
+  location: StoreLocation;
+  items: CartItem[];
 }

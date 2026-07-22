@@ -9,6 +9,17 @@ interface ProductCardProps {
   product: ApiProduct;
   onAddToCart: (product: ApiProduct) => void;
   onClick: (product: ApiProduct) => void;
+  /** Normalized comparison price (e.g. "$0.62 / apple") — shown as a
+   * secondary line under the total price. Only ever set on the Compare
+   * page (see comparisonService); every other caller omits it and the
+   * card looks exactly as it always has. */
+  unitPriceLabel?: string;
+  /** Marks this as the comparison engine's single featured recommendation —
+   * a green accent border plus a "Best Value" ribbon, not a new card. */
+  bestValue?: boolean;
+  /** Short savings callout (e.g. "Save $2.10") shown alongside the unit
+   * price — only meaningful together with `bestValue`. */
+  savingsLabel?: string;
 }
 
 const STORE_STYLE: Record<ApiProduct['store'], { bg: string; text: string }> = {
@@ -45,7 +56,9 @@ function StarRating({ rating }: { rating: number }) {
   );
 }
 
-export default function ProductCard({ product, onAddToCart, onClick }: ProductCardProps) {
+export default function ProductCard({
+  product, onAddToCart, onClick, unitPriceLabel, bestValue, savingsLabel,
+}: ProductCardProps) {
   const [imgFailed, setImgFailed] = useState(false);
   const [cartFeedback, setCartFeedback] = useState(false);
   const style = STORE_STYLE[product.store];
@@ -60,12 +73,22 @@ export default function ProductCard({ product, onAddToCart, onClick }: ProductCa
   return (
     <article
       onClick={() => onClick(product)}
-      className="group bg-white border border-gray-100 rounded-2xl overflow-hidden hover:shadow-xl hover:shadow-black/8 hover:-translate-y-0.5 transition-all duration-200 flex flex-col cursor-pointer"
+      className={`group bg-white border rounded-2xl overflow-hidden hover:shadow-xl hover:shadow-black/8 hover:-translate-y-0.5 transition-all duration-200 flex flex-col cursor-pointer ${
+        bestValue ? 'border-[#2C742F] border-[1.5px]' : 'border-gray-100'
+      }`}
       role="button"
       tabIndex={0}
       aria-label={`View ${product.name} details`}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onClick(product); }}
     >
+      {bestValue && (
+        <div className="flex items-center justify-center gap-1.5 bg-[#2C742F] py-1.5">
+          <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M9 3a1 1 0 012 0v1h3a1 1 0 011 1v1a4 4 0 01-4 4h-.09A4.002 4.002 0 0113 11.9V13h2a1 1 0 110 2H5a1 1 0 110-2h2v-1.1A4.002 4.002 0 013.09 9H3a1 1 0 01-1-1V6a1 1 0 011-1h3V4a1 1 0 011-1z" />
+          </svg>
+          <span className="text-white text-[11px] font-bold tracking-wide">Best Value</span>
+        </div>
+      )}
       {/* ── Image region ─────────────────────────────────────────────── */}
       <div className="relative aspect-square bg-[#F8FDF8] overflow-hidden">
         {/* Store badge — top left */}
@@ -95,14 +118,6 @@ export default function ProductCard({ product, onAddToCart, onClick }: ProductCa
             </svg>
           )}
         </button>
-
-        {/* Live price indicator for scraper-sourced products */}
-        {product.isLiveData && (
-          <div className="absolute bottom-3 right-3 z-10 flex items-center gap-1 bg-emerald-600/90 backdrop-blur-sm rounded-full px-2 py-0.5 shadow-sm">
-            <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
-            <span className="text-white text-[9px] font-bold uppercase tracking-wide">Live</span>
-          </div>
-        )}
 
         {/* Organic / certification badge — bottom left */}
         {product.certifications?.includes('Organic') && (
@@ -146,6 +161,19 @@ export default function ProductCard({ product, onAddToCart, onClick }: ProductCa
             <span className="text-[#2C742F] text-xs font-bold">{product.discountPercent}% off</span>
           )}
         </div>
+
+        {(unitPriceLabel || savingsLabel) && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {unitPriceLabel && (
+              <span className="text-[#2C742F] text-xs font-bold">{unitPriceLabel}</span>
+            )}
+            {savingsLabel && (
+              <span className="text-[#2C742F] text-[10px] font-bold bg-[#E0F3E2] px-1.5 py-0.5 rounded-md">
+                {savingsLabel}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Brand */}
         <p className="text-[#1A1A1A]/45 text-[11px] font-medium uppercase tracking-wider truncate">
