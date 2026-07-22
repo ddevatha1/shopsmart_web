@@ -8,7 +8,9 @@ import { useUserStore } from '@/store/userStore';
 import { useRouteStore } from '@/store/routeStore';
 import { groupCartByStore, locationKey } from '@/utils/groupCartByStore';
 import { planShoppingTrip } from '@/services/tripService';
+import { requestPreciseLocation } from '@/services/locationService';
 import { subscribeToLiveLocation, type LiveLocation } from '@/services/liveLocationService';
+import LocationPermissionModal from '@/components/route/LocationPermissionModal';
 import {
   computeStopProgress,
   computeTripProgress,
@@ -21,6 +23,18 @@ import AppHeader from '@/components/AppHeader';
 import RouteMap from '@/components/RouteMap';
 import { storeAccents } from '@/theme/colors';
 import type { CartItem, StoreGroup, StoreName, TripPlan } from '@/types';
+
+// One explainer per browser session, not once per visit to /route — a
+// shopper who already said yes (or explicitly skipped) shouldn't be asked
+// again just for navigating back to the cart and returning here. Resets on
+// a new tab/session, which also gives someone who skipped a natural chance
+// to reconsider without needing a settings screen for it.
+const LOCATION_PROMPT_SESSION_KEY = 'shopsmart:routeLocationPromptSeen';
+
+function hasSeenLocationPrompt(): boolean {
+  if (typeof window === 'undefined') return true;
+  return sessionStorage.getItem(LOCATION_PROMPT_SESSION_KEY) === '1';
+}
 
 function formatDuration(minutes: number): string {
   if (minutes < 1) return '<1 min';
@@ -48,6 +62,19 @@ export default function RoutePage() {
   const { groups, itemsWithoutLocation } = useMemo(() => groupCartByStore(items), [items]);
   const routeKey = `${groups.map(g => locationKey(g.location)).join(',')}|${zipcode}`;
 
+  const [locationPromptSeen, setLocationPromptSeen] = useState(hasSeenLocationPrompt);
+  const dismissLocationPrompt = () => {
+    sessionStorage.setItem(LOCATION_PROMPT_SESSION_KEY, '1');
+    setLocationPromptSeen(true);
+  };
+  const handleShareLocation = async () => {
+    // Errors (denied/unavailable/timeout) resolve to null — tripService's
+    // own getCurrentCoordinates() fallback to the saved ZIP still applies,
+    // exactly as if the shopper had tapped "skip" instead.
+    await requestPreciseLocation();
+    dismissLocationPrompt();
+  };
+
   return (
     <main className="min-h-screen bg-white flex flex-col">
       <AppHeader back={{ onClick: () => router.push('/'), title: 'Your Route' }} />
@@ -62,6 +89,8 @@ export default function RoutePage() {
             </p>
           ))}
         </CenterState>
+      ) : !locationPromptSeen ? (
+        <LocationPermissionModal onShare={handleShareLocation} onSkip={dismissLocationPrompt} />
       ) : (
         <TripLoader
           key={routeKey}
