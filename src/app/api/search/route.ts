@@ -15,10 +15,14 @@ import { searchTraderJoesWithTimeout } from '@/services/traderJoesLiveScraper';
 import { searchAldiWithTimeout } from '@/services/aldiLiveScraper';
 import { correctQuery, logQueryCorrection } from '@/services/queryCorrection';
 import { perfLog } from '@/utils/perfLog';
+import { devLog } from '@/utils/devLog';
 
-// Playwright (Trader Joe's scraper, and Sprouts' image-fallback tier) needs
-// the Node.js runtime, not the Edge runtime.
 export const runtime = 'nodejs';
+// Every store call below is bounded to 8s; this is comfortably above the
+// worst-case max(store timeouts) plus aggregation/ranking overhead, and
+// comfortably inside Vercel's default function duration even on the free
+// Hobby tier — no plan upgrade needed for this route.
+export const maxDuration = 12;
 
 type StoreName = ApiProduct['store'];
 
@@ -615,11 +619,17 @@ export async function POST(req: NextRequest) {
   // Run the live Trader Joe's scraper, live Sprouts scraper, live Kroger API,
   // and live Aldi API in parallel.
   // Total latency = max(traderJoesTime, sproutsTime, krogerTime, aldiTime).
+  // Every store is now a plain HTTP call from this route's perspective —
+  // Trader Joe's fetches a pre-warmed cookie from the scraper-service
+  // (see traderJoesLiveScraper.ts) instead of launching a browser itself,
+  // so its budget matches the others rather than needing 45s for an
+  // in-process browser launch. Kept comfortably under `maxDuration` above
+  // so Vercel's own function timeout is never what kills a slow store.
   const [traderJoesResult, sproutsResult, krogerResult, aldiResult] = await Promise.allSettled([
-    timedStoreSearch("Trader Joe's", searchTraderJoesWithTimeout(query, zipcode, 45_000)), // still browser-based; includes storefront visit on first run
-    timedStoreSearch('Sprouts', searchSproutsWithTimeout(query, zipcode, 15_000)), // plain GraphQL API, no browser
-    timedStoreSearch('Kroger', searchKrogerWithTimeout(query, zipcode, 15_000)), // REST API, no browser
-    timedStoreSearch('Aldi', searchAldiWithTimeout(query, zipcode, 15_000)), // GraphQL API, no browser
+    timedStoreSearch("Trader Joe's", searchTraderJoesWithTimeout(query, zipcode, 8_000)),
+    timedStoreSearch('Sprouts', searchSproutsWithTimeout(query, zipcode, 8_000)),
+    timedStoreSearch('Kroger', searchKrogerWithTimeout(query, zipcode, 8_000)),
+    timedStoreSearch('Aldi', searchAldiWithTimeout(query, zipcode, 8_000)),
   ]);
 
   const aggregateStart = Date.now();
@@ -657,14 +667,14 @@ export async function POST(req: NextRequest) {
     const afterFood = raw.filter(p => isFoodProductName(p.name));
     for (const p of raw) {
       if (!isFoodProductName(p.name)) {
-        console.log(`[SearchFilter] ${store}: excluded "${p.name}" — reason: not classified as a food product`);
+        devLog(`[SearchFilter] ${store}: excluded "${p.name}" — reason: not classified as a food product`);
       }
     }
 
     const relevant = afterFood.filter(p => isRelevantToQuery(searchQuery, p.name));
     for (const p of afterFood) {
       if (!isRelevantToQuery(searchQuery, p.name)) {
-        console.log(`[SearchFilter] ${store}: excluded "${p.name}" — reason: no word overlap with query "${searchQuery}"`);
+        devLog(`[SearchFilter] ${store}: excluded "${p.name}" — reason: no word overlap with query "${searchQuery}"`);
       }
     }
 

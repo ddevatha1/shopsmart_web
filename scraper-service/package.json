@@ -1,0 +1,20 @@
+{
+  "name": "shopsmart-scraper-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Small always-on service that owns the two Playwright browser launches ShopSmart still needs (Trader Joe's session cookie, Sprouts product-image fallback). Deployed separately from the main Next.js app so Vercel never needs to launch a headless browser.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts"
+  },
+  "dependencies": {
+    "playwright": "^1.61.1"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "tsx": "^4",
+    "@types/node": "^20"
+  }
+}

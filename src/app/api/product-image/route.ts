@@ -34,6 +34,11 @@ import { TtlCache } from '@/utils/ttlCache';
 import { withTimeout } from '@/utils/withTimeout';
 
 export const runtime = 'nodejs';
+// The Sprouts store-scrape (bounded to 8s inside fetchSproutsProductImage,
+// itself a call to the scraper-service) runs before the Open Food Facts
+// fallback (5s) when both are needed — worst case is sequential, not
+// parallel, so this needs headroom above their sum.
+export const maxDuration = 15;
 
 // Product photos essentially never change, so this is really "cache
 // forever, but bounded so the process doesn't grow unboundedly across a

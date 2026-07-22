@@ -4,6 +4,10 @@ import type { StoreLocation, TripOrigin, TripRequest } from '@/types';
 import { planTrip } from '@/services/tripPlanner';
 
 export const runtime = 'nodejs';
+// Accounts for the Nominatim rate-limit queue (src/utils/geocode.ts) plus
+// OSRM's own request timeout when a multi-stop trip has stops without
+// already-known coordinates.
+export const maxDuration = 20;
 
 function isStoreLocation(value: unknown): value is StoreLocation {
   if (!value || typeof value !== 'object') return false;

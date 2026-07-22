@@ -10,9 +10,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runWarmup } from '@/services/warmupService';
 
-// Same reason as /api/search: Trader Joe's warm-up launches Playwright,
-// which needs the Node.js runtime, not the Edge runtime.
 export const runtime = 'nodejs';
+// Warming every store is now just parallel HTTP calls (Trader Joe's warm-up
+// fetches a cookie from the scraper-service rather than launching a
+// browser here), so this comfortably fits Vercel's free-tier limits.
+export const maxDuration = 12;
 
 export async function POST(req: NextRequest) {
   let body: { zipcode?: string };

@@ -31,7 +31,10 @@ import { toTitleCase, hashCode } from '@/utils/textFormat';
 import { withTimeout } from '@/utils/withTimeout';
 import { TtlCache } from '@/utils/ttlCache';
 import { dedupeInFlight } from '@/utils/dedupeInFlight';
+import { devLog } from '@/utils/devLog';
 import { createSproutsLocator } from '@/services/locators/sproutsLocator';
+
+const IMAGE_FETCH_TIMEOUT_MS = 8000;
 
 const SPROUTS_HOME_URL = 'https://shop.sprouts.com/';
 const SPROUTS_GRAPHQL_URL = 'https://shop.sprouts.com/graphql';
@@ -78,10 +81,10 @@ async function getSproutsSessionCookie(forceRefresh = false): Promise<string> {
     if (!forceRefresh && sessionCache && Date.now() < sessionCache.expiresAt) {
       return sessionCache.cookie;
     }
-    console.log('[Sprouts] Establishing a fresh anonymous session...');
+    devLog('[Sprouts] Establishing a fresh anonymous session...');
     const cookie = await establishSproutsSession();
     sessionCache = { cookie, expiresAt: Date.now() + SESSION_REUSE_MS };
-    console.log('[Sprouts] Session established.');
+    devLog('[Sprouts] Session established.');
     return cookie;
   });
 }
@@ -278,13 +281,13 @@ export async function searchSprouts(query: string, postalCode?: string): Promise
   const cacheKey = `${query.toLowerCase().trim()}|${postalCode}`;
   const cached = resultCache.get(cacheKey);
   if (cached) {
-    console.log(`[Sprouts] Cache hit for "${query}"`);
+    devLog(`[Sprouts] Cache hit for "${query}"`);
     return cached;
   }
 
   const storeLocation = await sproutsLocator.findNearestStore(postalCode);
   if (!storeLocation?.storeId) {
-    console.log(`[Sprouts] No Sprouts location found near ${postalCode}`);
+    devLog(`[Sprouts] No Sprouts location found near ${postalCode}`);
     return [];
   }
   const shopId = storeLocation.storeId;
@@ -292,7 +295,7 @@ export async function searchSprouts(query: string, postalCode?: string): Promise
   // string), same as Aldi — it isn't tied to a specific shop.
   const zoneId = '';
 
-  console.log(`[Sprouts] Live fetch for "${query}" @ postal ${postalCode}, shop ${shopId} (${storeLocation.name})`);
+  devLog(`[Sprouts] Live fetch for "${query}" @ postal ${postalCode}, shop ${shopId} (${storeLocation.name})`);
 
   let sessionCookie = await getSproutsSessionCookie();
   let json = await fetchSearchResults(query, postalCode, shopId, zoneId, sessionCookie);
@@ -301,7 +304,7 @@ export async function searchSprouts(query: string, postalCode?: string): Promise
   // within its reuse window — if the API signals an invalid session,
   // force a fresh one and retry exactly once before giving up.
   if (json.data?.noopQueryField !== undefined) {
-    console.log('[Sprouts] Session appears stale — establishing a new one and retrying once.');
+    devLog('[Sprouts] Session appears stale — establishing a new one and retrying once.');
     sessionCookie = await getSproutsSessionCookie(true);
     json = await fetchSearchResults(query, postalCode, shopId, zoneId, sessionCookie);
   }
@@ -315,7 +318,7 @@ export async function searchSprouts(query: string, postalCode?: string): Promise
 
   const rawProducts: RawSproutsProduct[] = [];
   extractProducts(json.data?.searchResultsPlacements, rawProducts);
-  console.log(`[Sprouts] Raw: ${rawProducts.length} items from API`);
+  devLog(`[Sprouts] Raw: ${rawProducts.length} items from API`);
 
   // ── De-duplicate (same logic as the original Python reference script) ────
   const seen = new Set<string>();
@@ -346,9 +349,9 @@ export async function searchSprouts(query: string, postalCode?: string): Promise
       inStock: true,
     }));
 
-  console.log(`[Sprouts] ${products.length} products found for "${query}"`);
+  devLog(`[Sprouts] ${products.length} products found for "${query}"`);
   // Debug output — trace the ZIP → store → product-count pipeline at a glance.
-  console.log(
+  devLog(
     `[Sprouts][debug] zip=${postalCode} -> store="${storeLocation.name}" id=${shopId} ` +
       `address="${storeLocation.address}, ${storeLocation.city}, ${storeLocation.state} ${storeLocation.zip}" ` +
       `lat=${storeLocation.latitude ?? '?'} lng=${storeLocation.longitude ?? '?'} products=${products.length}`,
@@ -380,75 +383,47 @@ export async function warmSprouts(zip?: string): Promise<void> {
 // Sprouts listing came back from search without an image_url, this visits
 // that exact product's own page (already known via storeProductUrl — no
 // search needed) and reads whatever photo Sprouts' own site shows for it.
-// This is the one place this scraper still uses a real browser — a single
-// product page, not the store-picker/search flow the rest of this file
-// used to need Playwright for.
+// This needs a real browser (Sprouts' product photo isn't in any API
+// response, only rendered DOM) — Vercel can't launch one, so this delegates
+// to the scraper-service (see scraper-service/src/sproutsImage.ts, which
+// holds the actual scrape logic this function used to run in-process) and
+// just relays the result. Fails soft (null) on any error/timeout, same as
+// before — the caller (src/app/api/product-image/route.ts) already falls
+// through to Open Food Facts when this returns null.
 export async function fetchSproutsProductImage(
   productUrl: string,
   productName: string,
 ): Promise<string | null> {
-  const { chromium } = await import('playwright');
-  let browser: import('playwright').Browser | null = null;
+  const url = process.env.SCRAPER_SERVICE_URL;
+  const token = process.env.SCRAPER_SERVICE_TOKEN;
+  if (!url || !token) {
+    console.warn('[Sprouts] product-image fetch skipped: SCRAPER_SERVICE_URL/SCRAPER_SERVICE_TOKEN not configured.');
+    return null;
+  }
+
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        '--disable-blink-features=AutomationControlled',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-      ],
-    });
+    const endpoint = new URL('/sprouts/image', url.replace(/\/$/, ''));
+    endpoint.searchParams.set('productUrl', productUrl);
+    endpoint.searchParams.set('productName', productName);
 
-    const context = await browser.newContext({
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      viewport: { width: 1280, height: 800 },
-      locale: 'en-US',
-    });
-    const page = await context.newPage();
-    await page.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
-    });
+    const res = await withTimeout(
+      fetch(endpoint, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      }),
+      IMAGE_FETCH_TIMEOUT_MS,
+      'Sprouts product-image fetch',
+    );
 
-    await page.goto(productUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await page.waitForTimeout(2500);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`scraper-service returned ${res.status}: ${text.slice(0, 200)}`);
+    }
 
-    // Every real product photo on Sprouts' site carries an `alt` equal to
-    // the product name — the same signal the main scraper's DOM pass used
-    // to match on, just here compared directly to the name we already have
-    // instead of a URL slug. Tracking pixels/icons have no alt text and
-    // are filtered out by the size check.
-    const imageUrl = await page.evaluate((name: string) => {
-      const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-      const targetWords = normalize(name).split(' ').filter(Boolean);
-      if (targetWords.length === 0) return null;
-
-      let best: { src: string; score: number } | null = null;
-      for (const img of Array.from(document.querySelectorAll('img'))) {
-        const src = img.currentSrc || img.src;
-        if (!src || !src.startsWith('http') || src.includes('data:')) continue;
-        if (img.naturalWidth < 200 || img.naturalHeight < 200) continue;
-        const altWords = new Set(normalize(img.alt || '').split(' ').filter(Boolean));
-        if (altWords.size === 0) continue;
-        const matched = targetWords.filter(w => altWords.has(w)).length;
-        const score = matched / targetWords.length;
-        if (score > (best?.score ?? 0)) best = { src, score };
-      }
-      // Require near-complete word overlap — this is a same-site, exact
-      // lookup (not a fuzzy third-party search), so a weak match here
-      // means something's wrong rather than "close enough."
-      return best && best.score >= 0.8 ? best.src : null;
-    }, productName);
-
-    return imageUrl;
+    const json = (await res.json()) as { imageUrl?: string | null };
+    return json.imageUrl ?? null;
   } catch (err) {
     console.warn('[Sprouts] product-image fetch failed:', err instanceof Error ? err.message : err);
     return null;
-  } finally {
-    if (browser) await browser.close().catch(() => {});
   }
 }

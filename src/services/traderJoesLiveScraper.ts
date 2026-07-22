@@ -2,28 +2,36 @@
  * Trader Joe's live price fetcher.
  *
  * Trader Joe's serves its own GraphQL API but only accepts requests once a
- * browser session (cookies) has been established against the storefront —
- * mirrors the reference Python script:
- *   1. Launch a browser, visit the storefront to establish session cookies
- *      (skipped on subsequent runs once a session is cached to disk)
- *   2. Issue the GraphQL search request through Playwright's request
- *      context, which shares those cookies
+ * browser session (cookies) has been established against the storefront.
+ * Establishing that session needs a real browser; the search request
+ * itself is just an authenticated HTTP POST once cookies exist. Vercel's
+ * serverless functions can't launch a browser (read-only filesystem, no
+ * bundled Chromium, function-duration limits), so session establishment
+ * lives in a separate always-on service (see scraper-service/) — this file
+ * only ever fetches a warm cookie from it over HTTP and does the plain
+ * GraphQL POST itself, mirroring the Kroger/Aldi/Sprouts pattern.
+ *
+ *   1. Fetch a warm session cookie from SCRAPER_SERVICE_URL (cached
+ *      in-memory for a few minutes so most searches don't call out at all)
+ *   2. Issue the GraphQL search request via plain `fetch`, using that cookie
  *   3. Map results to ApiProduct[], keeping only actual grocery items
  */
 
-import { chromium, request } from 'playwright';
-import type { APIRequestContext, Browser, BrowserContext } from 'playwright';
-import * as fs from 'fs';
-import * as path from 'path';
 import type { ApiProduct, StoreLocation } from '@/types';
 import { hashCode } from '@/utils/textFormat';
 import { withTimeout } from '@/utils/withTimeout';
 import { TtlCache } from '@/utils/ttlCache';
 import { dedupeInFlight } from '@/utils/dedupeInFlight';
+import { devLog } from '@/utils/devLog';
 import { createTraderJoesLocator, warmDirectory as warmTraderJoesDirectory } from '@/services/locators/traderJoesLocator';
 
 const TJ_GRAPHQL_URL = 'https://www.traderjoes.com/api/graphql';
-const SESSION_PATH = path.join(process.cwd(), '.traderjoes-session.json');
+const COOKIE_FETCH_TIMEOUT_MS = 8000;
+// The scraper-service refreshes its own cookie every ~20 min; a shorter
+// local cache keeps most searches from calling out at all while still
+// picking up a refreshed cookie reasonably quickly if the old one starts
+// failing.
+const COOKIE_CACHE_TTL_MS = 10 * 60 * 1000;
 
 const SEARCH_QUERY = `
 query SearchProducts(
@@ -144,94 +152,59 @@ function mapTJItem(item: TJItem, location: StoreLocation | undefined): ApiProduc
   };
 }
 
-// Patch navigator.webdriver so the site doesn't detect Playwright
-async function stealthContext(context: BrowserContext): Promise<void> {
-  await context.addInitScript(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => false });
-  });
-}
+// In-memory cache for the cookie itself — separate from resultCache below,
+// since a single cookie is reused across every query/store combination.
+let cookieCache: { header: string; fetchedAt: number } | null = null;
 
-const DESKTOP_USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
-  '(KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
-
-async function buildContext(browser: Browser): Promise<BrowserContext> {
-  const baseOpts = {
-    userAgent: DESKTOP_USER_AGENT,
-    viewport: { width: 1280, height: 800 },
-    locale: 'en-US',
-  };
-
-  if (fs.existsSync(SESSION_PATH)) {
-    try {
-      return await browser.newContext({ ...baseOpts, storageState: SESSION_PATH });
-    } catch { /* fall through */ }
+function scraperServiceConfig(): { url: string; token: string } {
+  const url = process.env.SCRAPER_SERVICE_URL;
+  const token = process.env.SCRAPER_SERVICE_TOKEN;
+  if (!url || !token) {
+    throw new Error(
+      'Trader Joe\'s scraper service is not configured — set SCRAPER_SERVICE_URL and SCRAPER_SERVICE_TOKEN.',
+    );
   }
-  return await browser.newContext(baseOpts);
+  return { url: url.replace(/\/$/, ''), token };
 }
 
-/** A plain HTTP client sharing the persisted session cookie, with no
- * browser process behind it — used by searchTraderJoes for the actual
- * GraphQL request, which needs cookies but never needs to render a page or
- * run JS. Launching a full headless Chromium (multi-second cold start) just
- * to issue one authenticated POST was the single biggest first-search cost
- * in the app; this removes it from every search, not just the first. */
-async function buildApiRequestContext(): Promise<APIRequestContext> {
-  const baseOpts = { userAgent: DESKTOP_USER_AGENT };
-  if (fs.existsSync(SESSION_PATH)) {
-    try {
-      return await request.newContext({ ...baseOpts, storageState: SESSION_PATH });
-    } catch { /* fall through */ }
+/** Fetches a warm session cookie from the scraper-service, caching it
+ * in-memory for COOKIE_CACHE_TTL_MS so most searches never call out.
+ * Deduped so concurrent callers (a racing warm-up and a shopper's first
+ * real search) share one HTTP round trip instead of each starting their
+ * own. */
+async function getCookieHeader(forceRefresh = false): Promise<string> {
+  if (!forceRefresh && cookieCache && Date.now() - cookieCache.fetchedAt < COOKIE_CACHE_TTL_MS) {
+    return cookieCache.header;
   }
-  return await request.newContext(baseOpts);
-}
 
-// Launches its own short-lived browser purely to visit the storefront and
-// persist session cookies to SESSION_PATH — a no-op once that file already
-// exists. Factored out of searchTraderJoes so this one-time cost (the
-// ~3-30s storefront visit) can be paid during app-startup warm-up instead
-// of during a shopper's first real search; searchTraderJoes still calls
-// this itself as a fallback in case warm-up hasn't finished (or hasn't run
-// at all) by the time a search arrives, so behavior is unchanged either way.
-// Wrapped in dedupeInFlight so a racing warm-up and a shopper's first real
-// search — both finding no session file at the same instant — share one
-// browser launch instead of each starting their own.
-async function establishSessionIfNeeded(): Promise<void> {
-  if (fs.existsSync(SESSION_PATH)) return;
-
-  await dedupeInFlight('trader-joes-session', async () => {
-    if (fs.existsSync(SESSION_PATH)) return;
-
-    console.log('[TraderJoes] No session — visiting storefront first');
-    let browser: Browser | null = null;
-    try {
-      browser = await chromium.launch({
-        headless: true,
-        args: [
-          '--disable-blink-features=AutomationControlled',
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--no-first-run',
-        ],
-      });
-
-      const context = await buildContext(browser);
-      await stealthContext(context);
-
-      const page = await context.newPage();
-      await page.goto('https://www.traderjoes.com/home/products', {
-        waitUntil: 'networkidle',
-        timeout: 30000,
-      });
-      await page.waitForTimeout(3000);
-      await page.close();
-
-      await context.storageState({ path: SESSION_PATH });
-    } finally {
-      if (browser) await browser.close().catch(() => {});
+  return dedupeInFlight('trader-joes-cookie', async () => {
+    if (!forceRefresh && cookieCache && Date.now() - cookieCache.fetchedAt < COOKIE_CACHE_TTL_MS) {
+      return cookieCache.header;
     }
+
+    const { url, token } = scraperServiceConfig();
+    const endpoint = forceRefresh ? `${url}/trader-joes/cookie?refresh=1` : `${url}/trader-joes/cookie`;
+    const res = await withTimeout(
+      fetch(endpoint, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      }),
+      COOKIE_FETCH_TIMEOUT_MS,
+      "Trader Joe's scraper-service cookie fetch",
+    );
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`scraper-service cookie fetch failed (${res.status}): ${text.slice(0, 200)}`);
+    }
+
+    const json = (await res.json()) as { cookie?: string };
+    if (!json.cookie) {
+      throw new Error('scraper-service returned no cookie.');
+    }
+
+    cookieCache = { header: json.cookie, fetchedAt: Date.now() };
+    return json.cookie;
   });
 }
 
@@ -242,7 +215,7 @@ export async function searchTraderJoes(
 ): Promise<ApiProduct[]> {
   const storeLocation = await traderJoesLocator.findNearestStore(zip);
   if (!storeLocation?.storeId) {
-    console.log(`[TraderJoes] No Trader Joe's location found near ${zip}`);
+    devLog(`[TraderJoes] No Trader Joe's location found near ${zip}`);
     return [];
   }
   const storeCode = storeLocation.storeId;
@@ -250,24 +223,24 @@ export async function searchTraderJoes(
   const cacheKey = `${query.toLowerCase().trim()}|${storeCode}`;
   const cached = resultCache.get(cacheKey);
   if (cached) {
-    console.log(`[TraderJoes] Cache hit for "${query}"`);
+    devLog(`[TraderJoes] Cache hit for "${query}"`);
     return cached;
   }
 
-  console.log(`[TraderJoes] Live fetch for "${query}" @ zip ${zip}, store ${storeCode} (${storeLocation.name})`);
+  devLog(`[TraderJoes] Live fetch for "${query}" @ zip ${zip}, store ${storeCode} (${storeLocation.name})`);
 
-  // No-op if warm-up (or an earlier search) already established a session.
-  await establishSessionIfNeeded();
-
-  // A plain HTTP client sharing the persisted session cookie — no browser
-  // process, no page render. Only session *establishment* (above) ever
-  // needs a real browser; the search request itself is just an
-  // authenticated POST.
-  const apiContext = await buildApiRequestContext();
+  const cookieHeader = await getCookieHeader();
 
   try {
-    const response = await apiContext.post(TJ_GRAPHQL_URL, {
-      data: {
+    const response = await fetch(TJ_GRAPHQL_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookieHeader,
+        Origin: 'https://www.traderjoes.com',
+        Referer: 'https://www.traderjoes.com/home/products',
+      },
+      body: JSON.stringify({
         operationName: 'SearchProducts',
         query: SEARCH_QUERY,
         variables: {
@@ -278,18 +251,13 @@ export async function searchTraderJoes(
           availability: '1',
           published: '1',
         },
-      },
-      headers: {
-        'Content-Type': 'application/json',
-        Origin: 'https://www.traderjoes.com',
-        Referer: 'https://www.traderjoes.com/home/products',
-      },
-      timeout: 20000,
+      }),
+      cache: 'no-store',
     });
 
-    if (!response.ok()) {
+    if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(`Trader Joe's GraphQL failed (${response.status()}): ${text.slice(0, 200)}`);
+      throw new Error(`Trader Joe's GraphQL failed (${response.status}): ${text.slice(0, 200)}`);
     }
 
     const json = (await response.json()) as TJSearchResponse;
@@ -298,22 +266,16 @@ export async function searchTraderJoes(
       throw new Error(`Trader Joe's GraphQL errors: ${JSON.stringify(json.errors).slice(0, 200)}`);
     }
 
-    // Save/refresh session for next time.
-    try {
-      await apiContext.storageState({ path: SESSION_PATH });
-    } catch { /* non-fatal */ }
-
     const items = json.data?.products?.items ?? [];
-    console.log(`[TraderJoes] Raw: ${items.length} items from API`);
+    devLog(`[TraderJoes] Raw: ${items.length} items from API`);
 
     const products = items
       .filter(isFoodItem)
       .map(item => mapTJItem(item, storeLocation))
       .filter((p): p is ApiProduct => p !== null);
 
-    console.log(`[TraderJoes] ${products.length} mapped products for "${query}"`);
-    // Debug output — trace the ZIP → store → product-count pipeline at a glance.
-    console.log(
+    devLog(`[TraderJoes] ${products.length} mapped products for "${query}"`);
+    devLog(
       `[TraderJoes][debug] zip=${zip} -> store="${storeLocation.name}" id=${storeCode} ` +
         `address="${storeLocation.address}, ${storeLocation.city}, ${storeLocation.state} ${storeLocation.zip}" ` +
         `lat=${storeLocation.latitude ?? '?'} lng=${storeLocation.longitude ?? '?'} products=${products.length}`,
@@ -324,8 +286,6 @@ export async function searchTraderJoes(
     throw new Error(
       `Trader Joe's scraper failed: ${err instanceof Error ? err.message : String(err)}`,
     );
-  } finally {
-    await apiContext.dispose().catch(() => {});
   }
 }
 
@@ -339,12 +299,12 @@ export function searchTraderJoesWithTimeout(
 }
 
 // ── Warm-up ────────────────────────────────────────────────────────────────
-// The single biggest first-search cost in the whole app: establishing the
-// session (launching a headless browser to visit the storefront, ~3-30s)
-// at app-startup time instead of on the first real search. Also warms the
-// zip-independent store directory (see traderJoesLocator.ts's warmDirectory)
-// and, once a zip is known, the nearest-store lookup itself.
+// Primes the in-memory cookie cache from the scraper-service (instead of
+// launching a browser here — Vercel never does that) at app-startup time
+// instead of on the first real search. Also warms the zip-independent
+// store directory (see traderJoesLocator.ts's warmDirectory) and, once a
+// zip is known, the nearest-store lookup itself.
 export async function warmTraderJoes(zip?: string): Promise<void> {
-  await Promise.all([establishSessionIfNeeded(), warmTraderJoesDirectory()]);
+  await Promise.all([getCookieHeader(), warmTraderJoesDirectory()]);
   if (zip) await traderJoesLocator.findNearestStore(zip);
 }

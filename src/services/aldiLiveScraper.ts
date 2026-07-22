@@ -34,6 +34,7 @@ import { toTitleCase, hashCode } from '@/utils/textFormat';
 import { withTimeout } from '@/utils/withTimeout';
 import { TtlCache } from '@/utils/ttlCache';
 import { dedupeInFlight } from '@/utils/dedupeInFlight';
+import { devLog } from '@/utils/devLog';
 import { createAldiLocator } from '@/services/locators/aldiLocator';
 
 const ALDI_HOME_URL = 'https://www.aldi.us/';
@@ -81,10 +82,10 @@ async function getAldiSessionCookie(forceRefresh = false): Promise<string> {
     if (!forceRefresh && sessionCache && Date.now() < sessionCache.expiresAt) {
       return sessionCache.cookie;
     }
-    console.log('[Aldi] Establishing a fresh anonymous session...');
+    devLog('[Aldi] Establishing a fresh anonymous session...');
     const cookie = await establishAldiSession();
     sessionCache = { cookie, expiresAt: Date.now() + SESSION_REUSE_MS };
-    console.log('[Aldi] Session established.');
+    devLog('[Aldi] Session established.');
     return cookie;
   });
 }
@@ -243,7 +244,7 @@ export async function searchAldi(
 
   const storeLocation = await aldiLocator.findNearestStore(postalCode);
   if (!storeLocation?.storeId) {
-    console.log(`[Aldi] No Aldi location found near ${postalCode}`);
+    devLog(`[Aldi] No Aldi location found near ${postalCode}`);
     return [];
   }
   const shopId = storeLocation.storeId;
@@ -254,11 +255,11 @@ export async function searchAldi(
   const cacheKey = `${query.toLowerCase().trim()}|${postalCode}|${shopId}`;
   const cached = productCache.get(cacheKey);
   if (cached) {
-    console.log(`[Aldi] Cache hit for "${query}"`);
+    devLog(`[Aldi] Cache hit for "${query}"`);
     return cached;
   }
 
-  console.log(`[Aldi] Live fetch for "${query}" @ postal ${postalCode}, shop ${shopId} (${storeLocation.name})`);
+  devLog(`[Aldi] Live fetch for "${query}" @ postal ${postalCode}, shop ${shopId} (${storeLocation.name})`);
 
   let sessionCookie = await getAldiSessionCookie();
   let json = await fetchSearchResults(query, postalCode, shopId, zoneId, sessionCookie);
@@ -267,7 +268,7 @@ export async function searchAldi(
   // within its reuse window — if the API signals an invalid session,
   // force a fresh one and retry exactly once before giving up.
   if (json.data?.noopQueryField !== undefined) {
-    console.log('[Aldi] Session appears stale — establishing a new one and retrying once.');
+    devLog('[Aldi] Session appears stale — establishing a new one and retrying once.');
     sessionCookie = await getAldiSessionCookie(true);
     json = await fetchSearchResults(query, postalCode, shopId, zoneId, sessionCookie);
   }
@@ -280,15 +281,15 @@ export async function searchAldi(
   }
 
   const rawItems = extractItemsFromPlacements(json.data?.searchResultsPlacements?.placements);
-  console.log(`[Aldi] Raw: ${rawItems.length} items from API`);
+  devLog(`[Aldi] Raw: ${rawItems.length} items from API`);
 
   const products = rawItems
     .map(item => normalizeAldiProduct(item, storeLocation))
     .filter((p): p is ApiProduct => p !== null);
 
-  console.log(`[Aldi] ${products.length} mapped products for "${query}"`);
+  devLog(`[Aldi] ${products.length} mapped products for "${query}"`);
   // Debug output — trace the ZIP → store → product-count pipeline at a glance.
-  console.log(
+  devLog(
     `[Aldi][debug] zip=${postalCode} -> store="${storeLocation.name}" id=${shopId} ` +
       `address="${storeLocation.address}, ${storeLocation.city}, ${storeLocation.state} ${storeLocation.zip}" ` +
       `lat=${storeLocation.latitude ?? '?'} lng=${storeLocation.longitude ?? '?'} products=${products.length}`,

@@ -12,6 +12,7 @@ import { toTitleCase, hashCode } from '@/utils/textFormat';
 import { withTimeout } from '@/utils/withTimeout';
 import { TtlCache } from '@/utils/ttlCache';
 import { dedupeInFlight } from '@/utils/dedupeInFlight';
+import { devLog } from '@/utils/devLog';
 import { createKrogerLocator } from '@/services/locators/krogerLocator';
 
 const KROGER_API = 'https://api.kroger.com/v1';
@@ -153,17 +154,17 @@ export async function searchKroger(
   const cacheKey = `${query.toLowerCase().trim()}|${zipcode}`;
   const cached = productCache.get(cacheKey);
   if (cached) {
-    console.log(`[Kroger] Cache hit for "${query}"`);
+    devLog(`[Kroger] Cache hit for "${query}"`);
     return cached;
   }
 
-  console.log(`[Kroger] Live fetch for "${query}" @ ${zipcode}`);
+  devLog(`[Kroger] Live fetch for "${query}" @ ${zipcode}`);
 
   const token = await getToken();
   const storeLocation = await krogerLocator.findNearestStore(zipcode);
 
   if (!storeLocation) {
-    console.log(`[Kroger] No Kroger location found near ${zipcode}`);
+    devLog(`[Kroger] No Kroger location found near ${zipcode}`);
     return [];
   }
 
@@ -184,15 +185,15 @@ export async function searchKroger(
 
   const json = await res.json();
   const raw = (json.data ?? []) as KrogerProduct[];
-  console.log(`[Kroger] Raw: ${raw.length} products from API`);
+  devLog(`[Kroger] Raw: ${raw.length} products from API`);
 
   const products = raw
     .map(p => mapKrogerProduct(p, storeLocation))
     .filter((p): p is ApiProduct => p !== null);
 
-  console.log(`[Kroger] ${products.length} mapped products for "${query}"`);
+  devLog(`[Kroger] ${products.length} mapped products for "${query}"`);
   // Debug output — trace the ZIP → store → product-count pipeline at a glance.
-  console.log(
+  devLog(
     `[Kroger][debug] zip=${zipcode} -> store="${storeLocation.name}" ` +
       `id=${storeLocation.storeId} address="${storeLocation.address}, ${storeLocation.city}, ` +
       `${storeLocation.state} ${storeLocation.zip}" ` +

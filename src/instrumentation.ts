@@ -9,9 +9,9 @@
  * for Kroger/Aldi/Sprouts/Trader Joe's session+token initialization.
  */
 export function register() {
-  // Only the Node.js runtime can run this (Playwright, `fs`, etc. aren't
-  // available on the Edge runtime) — matches /api/search and /api/warmup's
-  // own `export const runtime = 'nodejs'`.
+  // Matches /api/search and /api/warmup's own `export const runtime =
+  // 'nodejs'` — the Edge runtime doesn't run this hook the same way, and
+  // there's no reason to warm store integrations there anyway.
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     import('@/services/warmupService')
       .then(({ runWarmup }) => runWarmup())
