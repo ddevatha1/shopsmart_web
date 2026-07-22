@@ -140,15 +140,17 @@ test('"milk" clusters Whole Milk across stores and keeps 2% Milk a separate cate
 
 // ─── eggs ───────────────────────────────────────────────────────────────────
 
-test('"eggs" clusters across stores into a generic Eggs category', () => {
+test('"eggs" splits into Large and Extra Large subtype categories', () => {
   const products = [
     p('Kroger', 'Large Eggs'),
     p('Aldi', 'Grade A Large Eggs'),
-    p("Trader Joe's", 'Eggs'),
+    p("Trader Joe's", 'Eggs'), // no explicit size named -> defaults to Large
     p('Sprouts', 'Extra Large Eggs'),
   ];
-  const group = primaryGroup(products, 'eggs');
-  assert.equal(group.storeCount, 4);
+  const groups = buildProductGroups(products, 'eggs').filter((g) => g.storeCount > 1);
+  const large = groups.find((g) => g.name === 'Large Eggs');
+  assert.ok(large, 'expected a Large Eggs category');
+  assert.equal(large!.storeCount, 3, 'Kroger, Aldi, and the unlabeled Trader Joe\'s listing all default to Large');
 });
 
 // ─── bread / sandwich bread (previously: no category at all) ───────────────
@@ -216,7 +218,7 @@ test('"cheese" clusters a generic cheese across stores', () => {
   assert.equal(group.storeCount, 4);
 });
 
-test('"shredded cheese" produces a real multi-store category', () => {
+test('"shredded cheese" resolves to the Cheddar Cheese taxonomy subtype — form isn\'t a separate product', () => {
   const products = [
     p('Kroger', 'Shredded Cheddar Cheese'),
     p('Aldi', 'Fresh Shredded Cheddar Cheese'),
@@ -225,7 +227,7 @@ test('"shredded cheese" produces a real multi-store category', () => {
   ];
   const group = primaryGroup(products, 'shredded cheese');
   assert.equal(group.storeCount, 4);
-  assert.match(group.name.toLowerCase(), /shredded/);
+  assert.equal(group.name, 'Cheddar Cheese');
 });
 
 // ─── apples / gala apples (previously: no category at all) ─────────────────
@@ -255,15 +257,107 @@ test('"gala apples" produces a real multi-store category', () => {
 
 // ─── bananas ────────────────────────────────────────────────────────────────
 
-test('"bananas" clusters across stores', () => {
+test('"bananas" splits Organic from Conventional (unlabeled listings default to Conventional)', () => {
   const products = [
     p('Kroger', 'Bananas'),
     p('Aldi', 'Organic Bananas'),
     p("Trader Joe's", 'Bananas Bunch'),
     p('Sprouts', 'Fresh Bananas'),
   ];
-  const group = primaryGroup(products, 'bananas');
-  assert.equal(group.storeCount, 4);
+  const groups = buildProductGroups(products, 'bananas').filter((g) => g.storeCount > 1);
+  const conventional = groups.find((g) => g.name === 'Conventional Bananas');
+  assert.ok(conventional, `expected a Conventional Bananas category, got [${groups.map((g) => g.name)}]`);
+  assert.equal(conventional!.storeCount, 3, 'Kroger, Trader Joe\'s, and Sprouts all default to Conventional');
+});
+
+// ─── grocery taxonomy validation ────────────────────────────────────────────
+// Direct coverage of the taxonomy redesign's own validation list: every one
+// of these searches must produce more than one meaningful subtype category
+// whenever those varieties actually exist in the search results, using the
+// curated labels from groceryTaxonomy.ts rather than whatever a single
+// listing's raw name happened to be.
+
+test('"bread" splits into White and Wheat when both varieties are present', () => {
+  const products = [
+    p('Kroger', 'White Bread'), p('Aldi', 'White Sandwich Bread'),
+    p("Trader Joe's", 'Wheat Bread'), p('Sprouts', 'Whole Wheat Bread'),
+  ];
+  const groups = buildProductGroups(products, 'bread').filter((g) => g.storeCount > 1);
+  const white = groups.find((g) => g.name === 'White Bread');
+  const wheat = groups.find((g) => g.name === 'Wheat Bread');
+  assert.ok(white && wheat, `expected White Bread and Wheat Bread categories, got [${groups.map((g) => g.name)}]`);
+  assert.equal(white!.storeCount, 2);
+  assert.equal(wheat!.storeCount, 2);
+});
+
+test('"rice" splits into Jasmine and Basmati when both varieties are present', () => {
+  const products = [
+    p('Kroger', 'Jasmine Rice'), p('Aldi', 'Jasmine Rice'),
+    p("Trader Joe's", 'Basmati Rice'), p('Sprouts', 'Basmati Rice'),
+  ];
+  const groups = buildProductGroups(products, 'rice').filter((g) => g.storeCount > 1);
+  const jasmine = groups.find((g) => g.name === 'Jasmine Rice');
+  const basmati = groups.find((g) => g.name === 'Basmati Rice');
+  assert.ok(jasmine && basmati);
+  assert.equal(jasmine!.storeCount, 2);
+  assert.equal(basmati!.storeCount, 2);
+});
+
+test('"butter" splits into Salted and Unsalted, and never confuses "peanut butter" for the plain butter entry', () => {
+  const products = [
+    p('Kroger', 'Salted Butter'), p('Aldi', 'Salted Butter'),
+    p("Trader Joe's", 'Unsalted Butter'), p('Sprouts', 'Unsalted Butter'),
+  ];
+  const groups = buildProductGroups(products, 'butter').filter((g) => g.storeCount > 1);
+  const salted = groups.find((g) => g.name === 'Salted Butter');
+  const unsalted = groups.find((g) => g.name === 'Unsalted Butter');
+  assert.ok(salted && unsalted, `expected Salted Butter and Unsalted Butter, got [${groups.map((g) => g.name)}]`);
+  assert.equal(salted!.storeCount, 2);
+  assert.equal(unsalted!.storeCount, 2);
+
+  const pbProducts = [
+    p('Kroger', 'Creamy Peanut Butter'), p('Aldi', 'Creamy Peanut Butter'),
+  ];
+  const pbGroups = buildProductGroups(pbProducts, 'peanut butter');
+  assert.ok(pbGroups.every((g) => g.name !== 'Salted Butter' && g.name !== 'Unsalted Butter'));
+});
+
+test('"orange juice" splits into Pulp-Free and Some Pulp when both are present', () => {
+  const products = [
+    p('Kroger', 'Pulp Free Orange Juice'), p('Aldi', 'No Pulp Orange Juice'),
+    p("Trader Joe's", 'Some Pulp Orange Juice'), p('Sprouts', 'Some Pulp Orange Juice'),
+  ];
+  const groups = buildProductGroups(products, 'orange juice').filter((g) => g.storeCount > 1);
+  const pulpFree = groups.find((g) => g.name === 'Pulp-Free Orange Juice');
+  const somePulp = groups.find((g) => g.name === 'Some Pulp Orange Juice');
+  assert.ok(pulpFree && somePulp, `expected Pulp-Free and Some Pulp Orange Juice, got [${groups.map((g) => g.name)}]`);
+  assert.equal(pulpFree!.storeCount, 2);
+  assert.equal(somePulp!.storeCount, 2);
+});
+
+test('"eggs" honors brand/category metadata alongside the name when classifying a subtype', () => {
+  // Aldi is the one store that ever populates `category`/`aisle` — this
+  // confirms that signal is actually consulted, not just `name`.
+  const products = [
+    p('Aldi', 'Farmhouse Eggs', { category: 'Cage-Free Eggs' }),
+    p('Kroger', 'Cage-Free Eggs'),
+  ];
+  const groups = buildProductGroups(products, 'eggs').filter((g) => g.storeCount > 1);
+  const cageFree = groups.find((g) => g.name === 'Cage-Free Eggs');
+  assert.ok(cageFree, `expected Cage-Free Eggs to include the Aldi listing via its category field, got [${groups.map((g) => g.name)}]`);
+  assert.equal(cageFree!.storeCount, 2);
+});
+
+test('taxonomy-covered searches never drop a product that names the parent item but no known subtype', () => {
+  // "Bread" with no type qualifier at all isn't in the White/Wheat/
+  // Sourdough/... keyword list and bread has no safe default subtype — it
+  // must still surface via the dynamic-clustering fallback, not vanish.
+  const products = [
+    p('Kroger', 'Artisan Loaf Bread'), p('Aldi', 'Artisan Loaf Bread'),
+  ];
+  const groups = buildProductGroups(products, 'bread');
+  const allListings = groups.flatMap((g) => g.listings);
+  assert.equal(allListings.length, products.length, 'every product must land in some group, taxonomy or fallback');
 });
 
 // ─── beef / ground beef ─────────────────────────────────────────────────────
@@ -400,9 +494,12 @@ test('categoryLayerIsMeaningful: 1 category should skip (bypass to comparison)',
   assert.equal(categoryLayerIsMeaningful(groups), false);
 });
 
-test('categoryLayerIsMeaningful: a narrow search with only two categories should skip', () => {
-  // "chicken" -> Chicken Breast, Chicken Thighs — exactly the illustrative
-  // case from the redesign: too few categories to be worth the click.
+test('categoryLayerIsMeaningful: a taxonomy-covered item needs only 2 real subtype categories to show the grid', () => {
+  // "chicken" -> Chicken Breast, Chicken Thighs. Under the old dynamic-only
+  // rule this was "too few categories to be worth the click" — but chicken
+  // is a taxonomy-backed item (see groceryTaxonomy.ts), and 2 genuinely
+  // distinct cuts *is* the real choice a shopper is making, so it should
+  // show the grid rather than dump both cuts into one comparison view.
   const products = [
     p('Kroger', 'Chicken Breast'),
     p('Aldi', 'Chicken Breast'),
@@ -410,6 +507,20 @@ test('categoryLayerIsMeaningful: a narrow search with only two categories should
     p('Sprouts', 'Chicken Thighs'),
   ];
   const groups = buildProductGroups(products, 'chicken').filter(g => g.storeCount > 1);
+  assert.equal(groups.length, 2);
+  assert.equal(categoryLayerIsMeaningful(groups), true);
+});
+
+test('categoryLayerIsMeaningful: a narrow non-taxonomy search with only two categories still skips', () => {
+  // Same shape (2 multi-store categories) but no taxonomy entry covers
+  // "widget" — the dynamic-clustering path still needs 3 to be worth the
+  // click, since without a curated taxonomy backing them, 2 clusters
+  // aren't reliably a real, meaningful choice.
+  const products = [
+    p('Kroger', 'Widget Alpha'), p('Aldi', 'Widget Alpha'),
+    p('Kroger', 'Widget Bravo'), p('Aldi', 'Widget Bravo'),
+  ];
+  const groups = buildProductGroups(products, 'widget').filter(g => g.storeCount > 1);
   assert.equal(groups.length, 2);
   assert.equal(categoryLayerIsMeaningful(groups), false);
 });
