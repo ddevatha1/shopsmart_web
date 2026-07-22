@@ -54,9 +54,21 @@ const GROUP_FILLER_WORDS = new Set([
   'non-gmo', 'kosher', 'vegan', 'gluten-free', 'gluten', 'free', 'usda', 'extra',
   'super', 'large', 'medium', 'small', 'mini', 'giant', 'jumbo', 'select', 'choice',
   'crisp', 'ripe', 'aged', 'organic', 'individual', 'family', 'value', 'snack',
-  'pre', 'cut', 'sliced', 'a', 'an', 'the', 'of', 'and', 'with', 'in', 'from', 'for',
+  'pre', 'cut', 'sliced', 'a', 'an', 'the', 'of', 'and', 'with', 'in', 'from', 'for', 'on',
   'boneless', 'skinless', 'bone-in', 'bonein', 'skin-on', 'skinon', 'thin', 'thick', 'lean',
   'new', 'item', 'holiday', 'seasonal', 'exclusive',
+  // Produce form/preparation descriptors — the same closed-class treatment
+  // as the meat cut/prep words above, just for fruit/vegetable listings:
+  // "Corn on the Cob" and "Sweet Corn," "Broccoli Florets" and "Broccoli,"
+  // "Celery Stalks" and "Celery" all need to reduce to the same clustering
+  // identity — a store's choice of how to describe the cut/form of a
+  // vegetable isn't a different product. Deliberately excludes words with
+  // a real competing product on the other side of the same distinction
+  // (e.g. "kernels" also names unpopped Popcorn Kernels vs. popped
+  // Popcorn — a genuine different-product choice, not just packaging
+  // wording — so it stays a real clustering token, not filler).
+  'cob', 'ear', 'ears', 'husk', 'husked', 'shucked', 'floret', 'florets', 'stalk', 'stalks',
+  'spear', 'spears',
 ]);
 
 // General flavor/variant descriptors — a closed class of English words, not
@@ -290,6 +302,50 @@ function computeIdentity(product: ApiProduct): ProductIdentity {
   if (finalVariant.length === 0) finalVariant = finalCluster;
 
   return { clusterTokens: finalCluster, variantTokens: finalVariant, flavorCount, preparedCount, fillerCount };
+}
+
+/**
+ * Safety net for the case identitiesFuzzyEqual's deliberately-strict
+ * equal-size rule (see its own doc comment below) still leaves one store's
+ * listings clustered as their own singleton — e.g. one store phrasing
+ * "Sweet Corn" as "Corn on the Cob" reduces to a cluster-token set of a
+ * different size than every other store's "Sweet Corn" listings (extra or
+ * missing modifier words the filler dictionaries didn't anticipate), so
+ * the core union-find pass never merges them. Left alone, that store's
+ * otherwise clearly-relevant listings would silently vanish from the
+ * multi-store category (surfacing only as an easy-to-miss single-store
+ * chip elsewhere) — exactly the "global search hides products the
+ * single-store search finds" bug this guards against.
+ *
+ * Deliberately conservative: a single-store cluster only folds into a
+ * multi-store one when there is EXACTLY ONE multi-store cluster whose
+ * identity shares a fuzzy-matching token with it. If two or more
+ * multi-store clusters are equally plausible destinations (e.g. a lone
+ * "Milk" listing sitting next to both a "Whole Milk" and a "2% Milk"
+ * multi-store category), folding into either would be a guess, so it's
+ * left as its own single-store cluster instead — unchanged, existing
+ * behavior, still discoverable via the single-store search and the
+ * "related categories" chips, just not silently mis-assigned.
+ */
+function foldOrphanedSingleStoreClusters(
+  rootOrder: string[],
+  mergedByRoot: Map<string, ApiProduct[]>,
+  tokensByKey: Map<string, string[]>,
+): void {
+  const storeCountOf = (root: string) => new Set(mergedByRoot.get(root)!.map((p) => p.store)).size;
+  const multiStoreRoots = rootOrder.filter((r) => storeCountOf(r) > 1);
+  const singleStoreRoots = rootOrder.filter((r) => storeCountOf(r) === 1);
+
+  for (const singleRoot of singleStoreRoots) {
+    const singleTokens = tokensByKey.get(singleRoot)!;
+    const candidates = multiStoreRoots.filter((multiRoot) => {
+      const multiTokens = tokensByKey.get(multiRoot)!;
+      return singleTokens.some((sw) => multiTokens.some((mw) => fuzzyWordsMatch(sw, mw)));
+    });
+    if (candidates.length !== 1) continue; // no plausible match, or genuinely ambiguous
+    mergedByRoot.get(candidates[0])!.push(...mergedByRoot.get(singleRoot)!);
+    mergedByRoot.delete(singleRoot);
+  }
 }
 
 /** True when two clusters' identity token sets are the same size and every
@@ -601,11 +657,34 @@ export function buildProductGroups(products: ApiProduct[], query: string): Produ
     mergedByRoot.get(root)!.push(...byKey.get(key)!);
   }
 
+  foldOrphanedSingleStoreClusters(rootOrder, mergedByRoot, tokensByKey);
+
   const result: ProductGroup[] = [];
   for (const root of rootOrder) {
+    if (!mergedByRoot.has(root)) continue; // absorbed into another root above
     const listings = mergedByRoot.get(root)!;
     const singlePiece = listings.filter(isSoldIndividually);
     const bulk = listings.filter((p) => !isSoldIndividually(p));
+
+    // Splitting bulk vs. single-piece listings into two Stage 1 cards is
+    // only a real choice when a shopper would still see more than one
+    // store on *both* sides of the split — if one side would be left with
+    // just a single store, that split isn't presenting a meaningful
+    // "individual vs. bulk" decision, it's silently hiding that store's
+    // listings behind an easy-to-miss single-store category instead (the
+    // exact bug this guards against: a store whose corn happens to be
+    // sold "Each" disappearing from the main "Sweet Corn" card because
+    // every *other* store's corn is bagged). In that case, keep everything
+    // in one group instead of forcing an uneven split.
+    const bulkStoreCount = new Set(bulk.map((p) => p.store)).size;
+    const singleStoreCount = new Set(singlePiece.map((p) => p.store)).size;
+    const wouldOrphanAStore = bulk.length > 0 && singlePiece.length > 0
+      && (bulkStoreCount <= 1 || singleStoreCount <= 1);
+
+    if (wouldOrphanAStore) {
+      result.push(buildGroupEntry(root, listings, query));
+      continue;
+    }
 
     let baseName: string | null = null;
     if (bulk.length > 0) {
@@ -624,6 +703,51 @@ export function buildProductGroups(products: ApiProduct[], query: string): Produ
     .map((group) => ({ group, relevance: queryRelevanceScore(query, group.name) }))
     .sort((a, b) => b.relevance - a.relevance)
     .map(({ group }) => group);
+}
+
+/**
+ * Debug funnel logging for the category-assignment stage — makes it
+ * immediately obvious when (and why) a store's direct-match products
+ * failed to surface in any visible category, the exact failure mode the
+ * "Sweet Corn" bug this file's tests guard against was caused by. Call
+ * once per search, right after `buildProductGroups` runs, with the same
+ * `direct` product list that was passed in. Cheap: a handful of Set/filter
+ * operations over an already-small per-search result set, never gated
+ * behind a flag since it's the primary tool for diagnosing a future
+ * regression of this exact bug.
+ */
+export function logCategoryAssignment(directProducts: ApiProduct[], groups: ProductGroup[], query: string): void {
+  const byStore = new Map<StoreName, ApiProduct[]>();
+  for (const product of directProducts) {
+    if (!byStore.has(product.store)) byStore.set(product.store, []);
+    byStore.get(product.store)!.push(product);
+  }
+
+  for (const [store, products] of byStore) {
+    const assignedIds = new Set<string>();
+    const perCategoryCounts: string[] = [];
+    for (const group of groups) {
+      const count = group.listings.filter((l) => l.store === store).length;
+      if (count === 0) continue;
+      perCategoryCounts.push(`${group.name}: ${count}`);
+      for (const listing of group.listings) {
+        if (listing.store === store) assignedIds.add(listing.id);
+      }
+    }
+    const lost = products.filter((product) => !assignedIds.has(product.id));
+
+    console.log(
+      `[CategoryAssignment] query="${query}" store=${store} `
+      + `directMatches=${products.length} assigned=${assignedIds.size} `
+      + `categories=[${perCategoryCounts.join(', ') || 'none'}]`,
+    );
+    for (const product of lost) {
+      console.log(
+        `[CategoryAssignment] EXCLUDED "${product.name}" (${store}) for query "${query}" `
+        + `— reason: did not land in any category group`,
+      );
+    }
+  }
 }
 
 /** Turns a sibling group's (or a tangential related product's) full name

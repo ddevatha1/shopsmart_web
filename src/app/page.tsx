@@ -21,6 +21,7 @@ import {
   buildCombinedGroup,
   categoryLayerIsMeaningful,
   countMeaningfulCategories,
+  logCategoryAssignment,
   shortenSiblingLabel,
   type ProductGroup,
 } from '@/services/comparisonService';
@@ -191,7 +192,12 @@ export default function HomePage() {
       uniqueMeaningfulCategories: countMeaningfulCategories(multiStoreGroups),
       decision: categoryLayerWorthShowing ? 'show-category-layer' : 'skip-to-comparison',
     });
-  }, [hasSearched, activeQuery, groups.length, multiStoreGroups, categoryLayerWorthShowing]);
+    // Per-store category-assignment funnel — see comparisonService's
+    // logCategoryAssignment for what this catches (the "global search
+    // shows 0 Kroger products in a category the Kroger-only search
+    // clearly has matches for" bug).
+    logCategoryAssignment(direct, groups, activeQuery);
+  }, [hasSearched, activeQuery, groups, multiStoreGroups, categoryLayerWorthShowing, direct]);
   const bypassToComparison = hasSearched && !loading && !error
     && !singleStoreMode && direct.length > 0 && !categoryLayerWorthShowing;
   const combinedGroup = useMemo(

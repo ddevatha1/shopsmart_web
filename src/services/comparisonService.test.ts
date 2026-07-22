@@ -518,6 +518,104 @@ test('buildCombinedGroup never collides with a real cluster id from buildProduct
   assert.ok(!realGroupIds.includes(combined.id));
 });
 
+// ─── Global-vs-single-store parity ("Sweet Corn" bug) ──────────────────────
+// Regression coverage for: searching "corn" globally and opening the "Sweet
+// Corn" category showed zero Kroger products, even though a Kroger-only
+// search for "corn" returned many. Root causes: (1) identitiesFuzzyEqual's
+// equal-token-count requirement blocked Kroger's differently-worded listing
+// ("Corn on the Cob" vs "Sweet Corn") from ever merging into the same
+// cluster as every other store, and (2) the bulk/single-piece split forked
+// a cluster into two cards whenever both kinds existed, even when doing so
+// would leave one side representing only a single store — silently hiding
+// that store's listings behind an easy-to-miss single-store category. Every
+// store's direct-match listings for a query must end up visible in *some*
+// multi-store category the global search's category view actually shows,
+// the same set a single-store search for that query would return.
+
+test('a store phrasing the same product differently ("Corn on the Cob" vs "Sweet Corn") still lands in the one multi-store category', () => {
+  const products = [
+    p('Kroger', 'Corn on the Cob', { size: '1 ea' }),
+    p('Aldi', 'Sweet Corn', { size: '4 ct' }),
+    p("Trader Joe's", 'Sweet Corn', { size: '4 ct' }),
+    p('Sprouts', 'Sweet Corn', { size: '4 ct' }),
+  ];
+  const group = primaryGroup(products, 'corn');
+  assert.equal(group.storeCount, 4, 'Kroger\'s differently-worded corn listing must not be silently excluded');
+  assert.ok(
+    group.listings.some((l) => l.store === 'Kroger'),
+    'the "Sweet Corn" category must include Kroger\'s corn listing, matching what a Kroger-only search for "corn" returns',
+  );
+});
+
+test('a bulk/single-piece split never leaves one store\'s listings behind — the split only happens when both sides still span multiple stores', () => {
+  // Every other store bags its corn; Kroger happens to sell it "Each." A
+  // naive split would fork this into "Sweet Corn" (3 stores) and "Sweet
+  // Corn (Single)" (Kroger only) — reproducing the exact bug even after
+  // clustering succeeds, since Kroger's listings would still be pulled out
+  // into a separate, easy-to-miss single-store card.
+  const products = [
+    p('Kroger', 'Sweet Corn', { size: '1 ea' }),
+    p('Aldi', 'Sweet Corn', { size: '4 ct' }),
+    p("Trader Joe's", 'Sweet Corn', { size: '4 ct' }),
+    p('Sprouts', 'Sweet Corn', { size: '4 ct' }),
+  ];
+  const groups = buildProductGroups(products, 'corn');
+  assert.equal(groups.length, 1, 'expected exactly one "Sweet Corn" category, not a hidden single-store fork');
+  assert.equal(groups[0].storeCount, 4);
+  assert.ok(groups[0].listings.some((l) => l.store === 'Kroger' && l.size === '1 ea'));
+});
+
+test('a genuinely meaningful bulk-vs-single split (both sides span multiple stores) is still preserved', () => {
+  const products = [
+    p('Kroger', 'Roma Tomato', { size: '1 ea' }),
+    p('Aldi', 'Roma Tomato', { size: '1 ea' }),
+    p("Trader Joe's", 'Roma Tomato', { size: '2 lb bag' }),
+    p('Sprouts', 'Roma Tomato', { size: '2 lb bag' }),
+  ];
+  const groups = buildProductGroups(products, 'roma tomato');
+  assert.equal(groups.length, 2, 'expected the bag and single-piece variants to stay distinct, real choices');
+  const single = groups.find((g) => /single/i.test(g.name));
+  const bulk = groups.find((g) => g !== single);
+  assert.ok(single && bulk);
+  assert.equal(single!.storeCount, 2);
+  assert.equal(bulk!.storeCount, 2);
+});
+
+test('an unmatched single-store listing is never force-merged when more than one multi-store category could plausibly claim it', () => {
+  // A lone "Milk" (no fat-content qualifier) sits next to both a "Whole
+  // Milk" and a "2% Milk" multi-store category — equally plausible
+  // destinations, so it must be left on its own rather than guessed into
+  // either one.
+  const products = [
+    p('Kroger', 'Whole Milk'), p('Aldi', 'Whole Milk'),
+    p('Kroger', '2% Milk'), p('Aldi', '2% Milk'),
+    p('Sprouts', 'Milk'),
+  ];
+  const groups = buildProductGroups(products, 'milk');
+  const whole = groups.find((g) => g.name.toLowerCase().includes('whole'));
+  const twoPercent = groups.find((g) => g.name.includes('2%'));
+  assert.ok(whole && twoPercent);
+  assert.equal(whole!.storeCount, 2, 'the ambiguous "Milk" listing must not be guessed into Whole Milk');
+  assert.equal(twoPercent!.storeCount, 2, 'the ambiguous "Milk" listing must not be guessed into 2% Milk');
+  const sproutsGroup = groups.find((g) => g.listings.some((l) => l.store === 'Sprouts'));
+  assert.ok(sproutsGroup, 'the ambiguous listing should still exist somewhere (its own single-store group)');
+  assert.equal(sproutsGroup!.storeCount, 1);
+});
+
+test('"chicken breast" and "chicken thighs" remain distinct categories despite sharing the word "chicken"', () => {
+  const products = [
+    p('Kroger', 'Chicken Breast'), p('Aldi', 'Chicken Breast'),
+    p("Trader Joe's", 'Chicken Thighs'), p('Sprouts', 'Chicken Thighs'),
+  ];
+  const groups = buildProductGroups(products, 'chicken');
+  assert.equal(groups.length, 2);
+  const breast = groups.find((g) => g.name.toLowerCase().includes('breast'));
+  const thigh = groups.find((g) => g.name.toLowerCase().includes('thigh'));
+  assert.ok(breast && thigh);
+  assert.equal(breast!.storeCount, 2);
+  assert.equal(thigh!.storeCount, 2);
+});
+
 // ─── Best Value savings calculation ────────────────────────────────────────
 // Regression coverage for the "Save $159.89 on an $8 product" bug:
 // getUnitPrice used to switch which physical unit `.value` was denominated

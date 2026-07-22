@@ -633,6 +633,11 @@ export async function POST(req: NextRequest) {
   // (classify, score, diversify — see above), which also bakes in
   // matchType and relevance so the final merge below doesn't need to
   // recompute either.
+  // Per-store retrieval funnel — logs exactly how many products survive
+  // each filtering stage and, critically, *which* products were dropped
+  // and why, so a "global search is missing products the single-store
+  // search finds" regression is immediately diagnosable from these logs
+  // alone rather than requiring a fresh investigation each time.
   function collectStoreResult(
     store: StoreName,
     result: PromiseSettledResult<ApiProduct[]>,
@@ -641,12 +646,40 @@ export async function POST(req: NextRequest) {
     if (result.status !== 'fulfilled') {
       storeErrors.set(store, String(result.reason));
       console.warn(`[Search] ${store} error:`, result.reason);
+      perfLog('search:store-funnel', {
+        store, query: rawQuery, queryUsed: searchQuery,
+        rawCount: 0, afterFoodFilter: 0, afterRelevanceFilter: 0, finalCount: 0, error: true,
+      });
       return;
     }
-    const relevant = result.value
-      .filter(p => isFoodProductName(p.name))
-      .filter(p => isRelevantToQuery(searchQuery, p.name));
-    storeMap.set(store, selectStoreProducts(searchQuery, relevant));
+
+    const raw = result.value;
+    const afterFood = raw.filter(p => isFoodProductName(p.name));
+    for (const p of raw) {
+      if (!isFoodProductName(p.name)) {
+        console.log(`[SearchFilter] ${store}: excluded "${p.name}" — reason: not classified as a food product`);
+      }
+    }
+
+    const relevant = afterFood.filter(p => isRelevantToQuery(searchQuery, p.name));
+    for (const p of afterFood) {
+      if (!isRelevantToQuery(searchQuery, p.name)) {
+        console.log(`[SearchFilter] ${store}: excluded "${p.name}" — reason: no word overlap with query "${searchQuery}"`);
+      }
+    }
+
+    const selected = selectStoreProducts(searchQuery, relevant);
+    storeMap.set(store, selected);
+
+    perfLog('search:store-funnel', {
+      store,
+      query: rawQuery,
+      queryUsed: searchQuery,
+      rawCount: raw.length,
+      afterFoodFilter: afterFood.length,
+      afterRelevanceFilter: relevant.length,
+      finalCount: selected.length,
+    });
   }
 
   collectStoreResult("Trader Joe's", traderJoesResult, query);
