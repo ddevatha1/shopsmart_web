@@ -4,10 +4,12 @@ import { useEffect } from 'react';
 import AuthModal from '@/components/AuthModal';
 import CartDrawer from '@/components/CartDrawer';
 import ProfileTray from '@/components/ProfileTray';
+import { OnboardingOverlay } from '@/components/onboarding/OnboardingOverlay';
 import { useUserStore } from '@/store/userStore';
 import { useCartStore } from '@/store/cartStore';
 import { useSearchStore } from '@/store/searchStore';
 import { useUiStore } from '@/store/uiStore';
+import { useOnboardingStore } from '@/store/onboardingStore';
 import { useWarmupStore } from '@/store/warmupStore';
 import { perfLog } from '@/utils/perfLog';
 
@@ -34,11 +36,17 @@ export default function GlobalOverlays() {
   const warmup = useWarmupStore(s => s.warmup);
 
   const authOpen = useUiStore(s => s.authOpen);
+  const authInitialMode = useUiStore(s => s.authInitialMode);
   const closeAuth = useUiStore(s => s.closeAuth);
+  const openAuth = useUiStore(s => s.openAuth);
   const cartOpen = useUiStore(s => s.cartOpen);
   const closeCart = useUiStore(s => s.closeCart);
   const profileOpen = useUiStore(s => s.profileOpen);
   const closeProfile = useUiStore(s => s.closeProfile);
+  const onboardingOpen = useUiStore(s => s.onboardingOpen);
+  const closeOnboarding = useUiStore(s => s.closeOnboarding);
+  const openOnboarding = useUiStore(s => s.openOnboarding);
+  const hydrateOnboarding = useOnboardingStore(s => s.hydrate);
 
   useEffect(() => {
     hydrateUser().then(() => {
@@ -56,14 +64,26 @@ export default function GlobalOverlays() {
   useEffect(() => {
     hydrateCart();
   }, [hydrateCart]);
+  useEffect(() => {
+    hydrateOnboarding().then(() => {
+      if (!useOnboardingStore.getState().completed) openOnboarding();
+    });
+  }, [hydrateOnboarding, openOnboarding]);
 
   return (
     <>
+      <OnboardingOverlay
+        isOpen={onboardingOpen}
+        onClose={closeOnboarding}
+        onOpenAuth={mode => openAuth(mode)}
+      />
+
       <AuthModal
         key={authOpen ? 'auth-open' : 'auth-closed'}
         isOpen={authOpen}
         onClose={closeAuth}
         onAuth={u => useUserStore.getState().signIn(u)}
+        initialMode={authInitialMode}
       />
 
       <CartDrawer

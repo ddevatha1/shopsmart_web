@@ -12,6 +12,7 @@ import RefinementSection, { type CategoryChip } from '@/components/search/Refine
 import DidYouMeanBanner from '@/components/search/DidYouMeanBanner';
 import { SearchProgress } from '@/components/search/SearchProgress';
 import { ComparisonView } from '@/components/comparison/ComparisonView';
+import { ContextualHint } from '@/components/onboarding/ContextualHint';
 import { useUserStore } from '@/store/userStore';
 import { useCartStore } from '@/store/cartStore';
 import { useSearchStore } from '@/store/searchStore';
@@ -31,6 +32,11 @@ import { storeAccents } from '@/theme/colors';
 import { perfLog } from '@/utils/perfLog';
 
 const POPULAR = ['Organic Milk', 'Avocados', 'Chicken Breast', 'Almond Butter', 'Sourdough Bread'];
+// Shown once, only to a visitor who has genuinely never searched before
+// (see `recentSearches.length === 0` below) — "let the user perform the
+// main action" rather than explain it, per the onboarding system's "teach
+// only what's needed right now" principle.
+const FIRST_SEARCH_SUGGESTIONS = ['Milk', 'Eggs', 'Chicken'];
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
@@ -335,6 +341,21 @@ export default function HomePage() {
                 ? `Enter a product above to browse ${selectedStore}'s inventory.`
                 : 'Enter a product above to compare prices across all four stores near you.'}
             </p>
+            {recentSearches.length === 0 && (
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+                <span className="text-[#1A1A1A]/50 text-xs font-semibold">Try searching:</span>
+                {FIRST_SEARCH_SUGGESTIONS.map(term => (
+                  <button
+                    key={term}
+                    type="button"
+                    onClick={() => runSearch(term)}
+                    className="bg-[#E0F3E2] hover:bg-[#D0EBD2] text-[#2C742F] text-xs font-bold px-3.5 py-1.5 rounded-full transition-colors"
+                  >
+                    {term}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -345,6 +366,11 @@ export default function HomePage() {
         {hasSearched && !loading && !error && bypassToComparison && combinedGroup && (
           <div className="animate-results-fade-in">
             {correction && <DidYouMeanBanner correction={correction} onSearchOriginal={searchOriginal} />}
+            {combinedGroup.listings.length > 0 && (
+              <div className="max-w-5xl mx-auto px-4 pt-4">
+                <ContextualHint hintKey="search-compare" message="ShopSmart compares prices across stores." />
+              </div>
+            )}
             <ComparisonView
               group={combinedGroup}
               allDirectProducts={direct}
@@ -359,6 +385,11 @@ export default function HomePage() {
         {hasSearched && !loading && !error && !bypassToComparison && (
           <div className="animate-results-fade-in">
             {correction && <DidYouMeanBanner correction={correction} onSearchOriginal={searchOriginal} />}
+            {displayedItems.length > 0 && (
+              <div className="mb-6">
+                <ContextualHint hintKey="search-compare" message="ShopSmart compares prices across stores." />
+              </div>
+            )}
             <div className="mb-6">
               <h2 className="text-xl font-bold text-[#1A1A1A]">
                 {displayedItems.length}{' '}

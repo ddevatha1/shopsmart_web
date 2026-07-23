@@ -4,6 +4,7 @@ import { use, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import AppHeader from '@/components/AppHeader';
 import { ComparisonView } from '@/components/comparison/ComparisonView';
+import { ContextualHint } from '@/components/onboarding/ContextualHint';
 import { buildProductGroups } from '@/services/comparisonService';
 import { useCartStore } from '@/store/cartStore';
 import { useSearchStore } from '@/store/searchStore';
@@ -71,6 +72,9 @@ export default function ComparePage({ params }: { params: Promise<{ groupId: str
   return (
     <main className="min-h-screen bg-white">
       <AppHeader back={{ onClick: () => router.back(), title: group.name }} />
+      <div className="max-w-5xl mx-auto px-4 pt-4">
+        <ContextualHint hintKey="compare" message="Compare prices and savings across stores." />
+      </div>
       <ComparisonView
         group={group}
         allDirectProducts={direct}

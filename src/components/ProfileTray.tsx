@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { User, CartItem } from '@/types';
 import { useUserStore } from '@/store/userStore';
+import { useOnboardingStore } from '@/store/onboardingStore';
+import { useUiStore } from '@/store/uiStore';
 import { GROCERY_TAXONOMY } from '@/data/groceryTaxonomy';
 import { getAllPreferences, clearPreference } from '@/services/plannerPreferenceService';
 
@@ -113,12 +115,24 @@ export default function ProfileTray({
 }: ProfileTrayProps) {
   const updateZipcode = useUserStore(s => s.updateZipcode);
   const updateBudget = useUserStore(s => s.updateBudget);
+  const resetOnboarding = useOnboardingStore(s => s.resetOnboarding);
+  const openOnboarding = useUiStore(s => s.openOnboarding);
 
   const [plannerPrefs, setPlannerPrefs] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!isOpen) return;
     getAllPreferences(user.email).then(setPlannerPrefs);
   }, [isOpen, user.email]);
+
+  // Re-arms the Welcome overlay *and* every contextual hint (see
+  // onboardingStore.resetOnboarding) then reopens it directly — stays
+  // signed in throughout; OnboardingOverlay detects the existing session
+  // and skips straight past account creation.
+  const handleRestartOnboarding = async () => {
+    await resetOnboarding();
+    onClose();
+    openOnboarding();
+  };
 
   const handleClearPreference = async (taxonomyEntryId: string) => {
     await clearPreference(user.email, taxonomyEntryId);
@@ -311,6 +325,15 @@ export default function ProfileTray({
         </div>
 
         <div className="border-t border-gray-100 px-6 py-5 space-y-3">
+          <button
+            onClick={handleRestartOnboarding}
+            className="w-full flex items-center justify-center gap-2 bg-gray-50 hover:bg-gray-100 text-[#2C742F] font-semibold py-3 rounded-xl transition-colors text-sm"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Restart Onboarding
+          </button>
           <button
             onClick={() => {
               onSignOut();

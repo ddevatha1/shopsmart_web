@@ -9,6 +9,7 @@ import { getBudgetStatus } from '@/services/budgetService';
 import { planShoppingTrip } from '@/services/tripService';
 import { groupCartByStore, locationKey } from '@/utils/groupCartByStore';
 import { useUserStore } from '@/store/userStore';
+import { ContextualHint } from '@/components/onboarding/ContextualHint';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -181,6 +182,9 @@ export default function CartDrawer({
             </div>
           ) : (
             <div className="px-6 py-4">
+              <div className="mb-3">
+                <ContextualHint hintKey="cart" message="Add items to your list to find the smartest shopping plan." />
+              </div>
               {cartSuggestions.length > 0 && (
                 <p className="text-[#1A1A1A]/60 text-xs italic mb-3 px-1">
                   You may also need {cartSuggestions.join(' and ')}.

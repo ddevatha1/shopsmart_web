@@ -21,6 +21,7 @@ import {
 import { recordPurchases } from '@/services/purchaseHistoryService';
 import AppHeader from '@/components/AppHeader';
 import RouteMap from '@/components/RouteMap';
+import { ContextualHint } from '@/components/onboarding/ContextualHint';
 import { storeAccents } from '@/theme/colors';
 import type { CartItem, StoreGroup, StoreName, TripPlan } from '@/types';
 
@@ -297,6 +298,10 @@ function TripLoader({ groups, zipcode, itemsWithoutLocation }: {
               </svg>
               {tripProgress.isTripComplete ? 'Review Route' : 'Start Route'}
             </button>
+          </div>
+
+          <div className="px-4 mt-4">
+            <ContextualHint hintKey="route" message="Save money while keeping your trip efficient." />
           </div>
 
           <TripProgressHeader progress={tripProgress} />

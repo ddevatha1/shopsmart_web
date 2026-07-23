@@ -93,7 +93,7 @@ export default function AppHeader({ back }: Props) {
             </button>
           ) : (
             <button
-              onClick={openAuth}
+              onClick={() => openAuth()}
               className="bg-[#2C742F] hover:bg-[#255f27] text-white text-xs font-semibold px-4 py-2 rounded-full transition-colors"
             >
               Sign In

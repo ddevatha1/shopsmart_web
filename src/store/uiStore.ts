@@ -11,24 +11,36 @@ import { create } from 'zustand';
  */
 interface UiState {
   authOpen: boolean;
+  /** Which tab AuthModal should open on — set by openAuth's argument, read
+   * by GlobalOverlays when it mounts AuthModal. Defaults to 'signin' since
+   * that's every existing call site's (AppHeader's "Sign In" button)
+   * behavior; only the onboarding overlay's "Get Started" passes 'signup'. */
+  authInitialMode: 'signin' | 'signup';
   cartOpen: boolean;
   profileOpen: boolean;
-  openAuth: () => void;
+  onboardingOpen: boolean;
+  openAuth: (mode?: 'signin' | 'signup') => void;
   closeAuth: () => void;
   openCart: () => void;
   closeCart: () => void;
   openProfile: () => void;
   closeProfile: () => void;
+  openOnboarding: () => void;
+  closeOnboarding: () => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
   authOpen: false,
+  authInitialMode: 'signin',
   cartOpen: false,
   profileOpen: false,
-  openAuth: () => set({ authOpen: true }),
+  onboardingOpen: false,
+  openAuth: (mode = 'signin') => set({ authOpen: true, authInitialMode: mode }),
   closeAuth: () => set({ authOpen: false }),
   openCart: () => set({ cartOpen: true, profileOpen: false }),
   closeCart: () => set({ cartOpen: false }),
   openProfile: () => set({ profileOpen: true, cartOpen: false }),
   closeProfile: () => set({ profileOpen: false }),
+  openOnboarding: () => set({ onboardingOpen: true }),
+  closeOnboarding: () => set({ onboardingOpen: false }),
 }));

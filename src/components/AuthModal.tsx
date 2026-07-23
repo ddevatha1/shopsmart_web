@@ -7,6 +7,12 @@ interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAuth: (user: User) => void;
+  /** Which tab to open on — defaults to 'signin' (every pre-existing call
+   * site's behavior). The onboarding overlay's "Get Started" is the only
+   * caller that passes 'signup'. Parent re-mounts this component via a
+   * `key` prop on open (see GlobalOverlays), so this only ever needs to
+   * seed the initial `mode` state, never react to being changed live. */
+  initialMode?: 'signin' | 'signup';
 }
 
 const LS_ACCOUNTS_KEY = 'shopsmart_accounts';
@@ -28,8 +34,8 @@ function saveAccount(user: User): void {
   localStorage.setItem(LS_ACCOUNTS_KEY, JSON.stringify(accounts));
 }
 
-export default function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+export default function AuthModal({ isOpen, onClose, onAuth, initialMode = 'signin' }: AuthModalProps) {
+  const [mode, setMode] = useState<'signin' | 'signup'>(initialMode);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [zipcode, setZipcode] = useState('');
