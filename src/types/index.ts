@@ -159,3 +159,108 @@ export interface StoreGroup {
   location: StoreLocation;
   items: CartItem[];
 }
+
+// ── Smart Shopping Planner ──────────────────────────────────────────────
+
+/** One line of a shopper's parsed grocery list, resolved client-side
+ * (instantly, no network call — see plannerAmbiguityService.ts) before
+ * ever being sent to /api/planner. `subtypeId` is `undefined` when the
+ * item isn't ambiguous at all (no taxonomy entry, or only one subtype),
+ * `null` when the shopper explicitly chose "No Preference" (the optimizer
+ * is free to pick whichever subtype produces the best overall plan), and a
+ * real id when a specific subtype was chosen or remembered. */
+export interface PlannerListItem {
+  id: string;
+  rawText: string;
+  taxonomyEntryId?: string;
+  subtypeId?: string | null;
+}
+
+export interface AmbiguityOption {
+  subtypeId: string;
+  label: string;
+}
+
+/** One clarifying question to show the shopper — grouped so every
+ * ambiguous item in a list is presented at once, not one prompt at a time. */
+export interface AmbiguityPrompt {
+  taxonomyEntryId: string;
+  itemLabel: string;
+  listItemIds: string[];
+  options: AmbiguityOption[];
+  /** Pre-selected value, if a remembered preference or a safe taxonomy
+   * default exists — still fully overridable by the shopper. */
+  rememberedDefault?: string;
+}
+
+/** Relative weights the optimizer balances when scoring the "Balanced"
+ * candidate — cost/time/distance/fewerStops only. `freshness`/`reliability`
+ * are deliberately not modeled: no real per-store data source exists for
+ * either anywhere in this app, and fabricating plausible-looking numbers
+ * for a "trustworthy" feature would be worse than not offering them. */
+export interface PlanWeights {
+  cost: number;
+  time: number;
+  distance: number;
+  fewerStops: number;
+}
+
+export interface PlanLineItem {
+  listItemId: string;
+  rawText: string;
+  product: ApiProduct | null;
+  notFound: boolean;
+  /** Only set when notFound — the closest real match found for this item
+   * (a broader, subtype-unfiltered search), offered as a substitution
+   * rather than leaving the shopper with nothing. */
+  alternativeSuggestion?: ApiProduct;
+}
+
+export interface PlanStoreAssignment {
+  store: ApiProduct['store'];
+  location: StoreLocation;
+  items: PlanLineItem[];
+  subtotal: number;
+}
+
+export type PlanCandidateId = 'balanced' | 'cheapest' | 'fastest' | 'fewest-stops';
+
+export interface PlanCandidate {
+  id: PlanCandidateId;
+  label: string;
+  storeAssignments: PlanStoreAssignment[];
+  totalCost: number;
+  /** Drive-distance-based approximation, clearly labeled as an estimate
+   * wherever shown (see shoppingPlanOptimizer.ts's GAS_COST_PER_MILE). */
+  estimatedGasCost: number;
+  /** This plan's totalCost vs. the best achievable single-store total for
+   * the same list — 0 when a single store was already optimal. */
+  estimatedSavings: number;
+  totalDriveMinutes: number;
+  totalDriveMiles: number;
+  storeCount: number;
+  itemsFound: number;
+  itemsTotal: number;
+  /** Reused as-is from tripPlanner.planTrip — feeds RouteMap directly with
+   * zero translation, and is what /route recomputes (from the cart this
+   * candidate populates) once the shopper taps "Start Shopping." */
+  tripPlan: TripPlan;
+}
+
+export interface ShoppingPlanRequest {
+  items: PlannerListItem[];
+  zipcode: string;
+}
+
+export interface ShoppingPlanResponse {
+  /** Always all 4 ids, in this order: balanced, cheapest, fastest,
+   * fewest-stops — the caller never needs to know which subsets were
+   * actually distinct. */
+  candidates: PlanCandidate[];
+  recommendedId: PlanCandidateId;
+  /** List items that couldn't be found at any of the 4 stores at all —
+   * the same across every candidate (coverage is optimized first, so a
+   * candidate never omits an item some other candidate would have
+   * found), which is why this lives here once rather than per-candidate. */
+  unresolvedItems: PlanLineItem[];
+}

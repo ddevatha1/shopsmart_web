@@ -28,7 +28,7 @@
  *     same product, or nothing."
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { hasDifferentHeadNoun, tokenizeName } from '@/app/api/search/route';
+import { hasDifferentHeadNoun, tokenizeName } from '@/services/searchService';
 import { fetchSproutsProductImage } from '@/services/sproutsLiveScraper';
 import { TtlCache } from '@/utils/ttlCache';
 import { withTimeout } from '@/utils/withTimeout';

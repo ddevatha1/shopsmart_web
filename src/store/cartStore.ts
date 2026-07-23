@@ -14,6 +14,11 @@ interface CartState {
   addToCart: (product: ApiProduct, qty?: number) => Promise<void>;
   updateQty: (productId: string, qty: number) => Promise<void>;
   remove: (productId: string) => Promise<void>;
+  /** Replaces the entire cart — used by the Smart Shopping Planner's
+   * "Start Shopping" action to load a chosen plan's exact items (each
+   * already carrying the specific store/location it was priced at),
+   * rather than merging with whatever was in the cart before. */
+  setCart: (items: CartItem[]) => Promise<void>;
 }
 
 function currentCartOwner(): string | null {
@@ -60,6 +65,13 @@ export const useCartStore = create<CartState>((set, get) => ({
     const next = get().items.filter((i) => i.product.id !== productId);
     set({ items: next });
     if (owner) await cartRepository.saveCart(owner, next);
+  },
+
+  setCart: async (items) => {
+    const owner = currentCartOwner();
+    if (!owner) return;
+    set({ items });
+    await cartRepository.saveCart(owner, items);
   },
 }));
 

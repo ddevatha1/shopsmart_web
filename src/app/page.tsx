@@ -299,6 +299,28 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ── Smart Shopping Planner entry point ───────────────────────────────── */}
+      <section className="max-w-4xl mx-auto px-4 -mt-6">
+        <button
+          type="button"
+          onClick={() => router.push('/planner')}
+          className="w-full flex items-center gap-4 bg-white border border-gray-100 hover:border-[#2C742F]/30 rounded-2xl shadow-sm hover:shadow-md p-5 text-left transition-all"
+        >
+          <div className="w-11 h-11 rounded-full bg-[#E0F3E2] flex items-center justify-center shrink-0">
+            <svg className="w-5 h-5 text-[#2C742F]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            </svg>
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[#1A1A1A] font-bold text-sm">Smart Shopping Planner</p>
+            <p className="text-[#1A1A1A]/50 text-xs mt-0.5">Paste your whole grocery list — get the best route, stores, and prices, instantly.</p>
+          </div>
+          <svg className="w-4 h-4 text-[#1A1A1A]/30 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      </section>
+
       {/* ── Dashboard body ───────────────────────────────────────────────────── */}
       <section className="max-w-7xl mx-auto px-4 py-10">
         {!hasSearched && (

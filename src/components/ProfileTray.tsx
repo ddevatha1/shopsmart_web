@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { User, CartItem } from '@/types';
 import { useUserStore } from '@/store/userStore';
+import { GROCERY_TAXONOMY } from '@/data/groceryTaxonomy';
+import { getAllPreferences, clearPreference } from '@/services/plannerPreferenceService';
 
 interface ProfileTrayProps {
   isOpen: boolean;
@@ -92,6 +94,16 @@ function EditableRow({
   );
 }
 
+function taxonomyLabel(taxonomyEntryId: string): string {
+  return taxonomyEntryId.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function subtypeLabel(taxonomyEntryId: string, subtypeId: string): string {
+  if (subtypeId === 'no-preference') return 'No Preference';
+  const entry = GROCERY_TAXONOMY.find(e => e.id === taxonomyEntryId);
+  return entry?.subtypes.find(s => s.id === subtypeId)?.label ?? subtypeId;
+}
+
 export default function ProfileTray({
   isOpen,
   onClose,
@@ -101,6 +113,21 @@ export default function ProfileTray({
 }: ProfileTrayProps) {
   const updateZipcode = useUserStore(s => s.updateZipcode);
   const updateBudget = useUserStore(s => s.updateBudget);
+
+  const [plannerPrefs, setPlannerPrefs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!isOpen) return;
+    getAllPreferences(user.email).then(setPlannerPrefs);
+  }, [isOpen, user.email]);
+
+  const handleClearPreference = async (taxonomyEntryId: string) => {
+    await clearPreference(user.email, taxonomyEntryId);
+    setPlannerPrefs(prev => {
+      const next = { ...prev };
+      delete next[taxonomyEntryId];
+      return next;
+    });
+  };
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -249,6 +276,37 @@ export default function ProfileTray({
                 Low to High
               </span>
             </div>
+          </section>
+
+          <section>
+            <h3 className="text-[#1A1A1A]/50 text-xs font-semibold uppercase tracking-wider mb-3">
+              Grocery Preferences
+            </h3>
+            {Object.keys(plannerPrefs).length > 0 ? (
+              <div className="bg-gray-50 rounded-2xl divide-y divide-gray-100">
+                {Object.entries(plannerPrefs).map(([taxonomyEntryId, subtypeId]) => (
+                  <div key={taxonomyEntryId} className="flex items-center justify-between px-4 py-3">
+                    <div>
+                      <p className="text-[#1A1A1A] text-sm font-semibold">{taxonomyLabel(taxonomyEntryId)}</p>
+                      <p className="text-[#1A1A1A]/50 text-xs mt-0.5">{subtypeLabel(taxonomyEntryId, subtypeId)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleClearPreference(taxonomyEntryId)}
+                      className="text-[#1A1A1A]/40 hover:text-red-600 text-xs font-medium transition-colors"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="bg-gray-50 rounded-2xl p-4 text-center">
+                <p className="text-[#1A1A1A]/40 text-sm">
+                  No remembered choices yet — the Smart Shopping Planner will save them here as you use it.
+                </p>
+              </div>
+            )}
           </section>
         </div>
 
