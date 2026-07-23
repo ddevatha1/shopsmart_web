@@ -1,11 +1,11 @@
 services:
   - type: web
     name: shopsmart-scraper-service
-    runtime: node
+    runtime: docker
     plan: free
     rootDir: scraper-service
-    buildCommand: npm install && npx playwright install --with-deps chromium && npm run build
-    startCommand: npm start
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: SCRAPER_SERVICE_TOKEN
