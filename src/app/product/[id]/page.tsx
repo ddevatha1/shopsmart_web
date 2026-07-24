@@ -153,7 +153,9 @@ function RelatedCard({ product, onAddToCart, onClick }: { product: ApiProduct; o
       </div>
       <div className="p-2.5">
         <p className="text-[#1A1A1A] text-xs font-semibold leading-snug line-clamp-2 mb-1">{product.name}</p>
-        <span className="text-[#2C742F] font-bold text-sm">${product.price.toFixed(2)}</span>
+        <span className="text-[#2C742F] font-bold text-sm">
+          {typeof product.price === 'number' ? `$${product.price.toFixed(2)}` : 'Price unavailable'}
+        </span>
       </div>
     </div>
   );
@@ -313,9 +315,9 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
             <div className="bg-gray-50 border border-gray-100 rounded-2xl p-4 space-y-3">
               <div className="flex items-center gap-3 flex-wrap">
                 <span className="bg-[#7B2D2D] text-white font-extrabold text-2xl px-4 py-1.5 rounded-xl">
-                  ${product.price.toFixed(2)}
+                  {typeof product.price === 'number' ? `$${product.price.toFixed(2)}` : 'Price unavailable'}
                 </span>
-                {product.originalPrice != null && (
+                {typeof product.originalPrice === 'number' && (
                   <>
                     <span className="text-[#1A1A1A]/40 line-through text-base">${product.originalPrice.toFixed(2)}</span>
                     <span className="text-[#2C742F] font-bold text-sm">{product.discountPercent}% off</span>

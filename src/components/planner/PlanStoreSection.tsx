@@ -50,7 +50,7 @@ export default function PlanStoreSection({ index, assignment }: Props) {
             <div key={line.listItemId} className="flex items-center justify-between gap-2">
               <span className="text-[#1A1A1A]/75 text-[13px] truncate">{line.product?.name ?? line.rawText}</span>
               <span className="text-[#1A1A1A]/60 text-[13px] font-medium shrink-0">
-                ${line.product?.price.toFixed(2)}
+                {typeof line.product?.price === 'number' ? `$${line.product.price.toFixed(2)}` : '—'}
               </span>
             </div>
           ))}

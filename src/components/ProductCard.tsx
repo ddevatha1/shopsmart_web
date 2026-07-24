@@ -153,7 +153,7 @@ export default function ProductCard({
           <span className="bg-[#7B2D2D] text-white font-extrabold text-base px-2.5 py-1 rounded-lg">
             ${product.price.toFixed(2)}
           </span>
-          {product.originalPrice && (
+          {typeof product.originalPrice === 'number' && (
             <span className="text-[#1A1A1A]/40 line-through text-sm">
               ${product.originalPrice.toFixed(2)}
             </span>
