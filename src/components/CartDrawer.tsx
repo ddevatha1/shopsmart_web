@@ -10,6 +10,7 @@ import { planShoppingTrip } from '@/services/tripService';
 import { groupCartByStore, locationKey } from '@/utils/groupCartByStore';
 import { useUserStore } from '@/store/userStore';
 import { ContextualHint } from '@/components/onboarding/ContextualHint';
+import { AutoOptimizeSheet } from '@/components/cart/AutoOptimizeSheet';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -116,6 +117,9 @@ export default function CartDrawer({
   // state directly (avoiding a synchronous setState-in-effect), so the
   // display-time gate lives here instead.
   const tripPreview = groups.length >= 2 ? fetchedTrip : null;
+
+  const [optimizeSheetOpen, setOptimizeSheetOpen] = useState(false);
+  const canOptimize = groups.length >= 1;
 
   return (
     <>
@@ -345,6 +349,19 @@ export default function CartDrawer({
               <span className="text-[#2C742F] font-extrabold text-xl">${total.toFixed(2)}</span>
             </div>
 
+            {canOptimize && (
+              <button
+                type="button"
+                onClick={() => setOptimizeSheetOpen(true)}
+                className="w-full flex items-center justify-center gap-2 bg-[#E0F3E2] hover:bg-[#D0EBD2] text-[#2C742F] font-semibold py-3.5 rounded-xl transition-colors text-sm"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                </svg>
+                Auto-Optimize
+              </button>
+            )}
+
             <button
               onClick={() => { onClose(); router.push('/route'); }}
               className="w-full bg-[#2C742F] hover:bg-[#255f27] text-white font-semibold py-3.5 rounded-xl transition-colors text-sm"
@@ -358,6 +375,15 @@ export default function CartDrawer({
           </div>
         )}
       </aside>
+
+      <AutoOptimizeSheet
+        isOpen={optimizeSheetOpen}
+        onClose={() => setOptimizeSheetOpen(false)}
+        items={items}
+        groups={groups}
+        zipcode={zipcode}
+        currentTripMinutes={tripPreview?.totalDurationMinutes ?? null}
+      />
     </>
   );
 }

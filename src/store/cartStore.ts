@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import type { ApiProduct, CartItem } from '../types';
-import { cartRepository } from '../repositories/cartRepository';
-import { useUserStore } from './userStore';
+import type { ApiProduct, CartItem } from '@/types';
+import { cartRepository } from '@/repositories/cartRepository';
+import { useUserStore } from '@/store/userStore';
 
 /** Direct port of shopsmart_mobile/src/store/cartStore.ts. The cart is
  * scoped to whichever account is currently signed in (see cartRepository)
@@ -10,6 +10,13 @@ import { useUserStore } from './userStore';
 interface CartState {
   items: CartItem[];
   hydrated: boolean;
+  /** The cart's contents immediately before the last Auto-Optimize "Apply
+   * Plan" — a single-slot undo, not a full history. Cleared by any other
+   * cart mutation (manual add/remove/qty-change, or the Planner's own
+   * "Start Shopping") so Undo can never jump back over unrelated changes
+   * the shopper made since applying — it only ever means "undo THAT
+   * optimization," never "undo my last N actions." */
+  lastOptimizationSnapshot: CartItem[] | null;
   hydrate: () => Promise<void>;
   addToCart: (product: ApiProduct, qty?: number) => Promise<void>;
   updateQty: (productId: string, qty: number) => Promise<void>;
@@ -19,6 +26,14 @@ interface CartState {
    * already carrying the specific store/location it was priced at),
    * rather than merging with whatever was in the cart before. */
   setCart: (items: CartItem[]) => Promise<void>;
+  /** Cart Auto-Optimize's "Apply Plan" — replaces the cart the same way
+   * `setCart` does, but also snapshots the pre-apply cart so
+   * `undoLastOptimization` can restore it instantly. */
+  applyOptimizedItems: (items: CartItem[]) => Promise<void>;
+  /** Restores the cart to exactly what it was before the last Auto-
+   * Optimize apply. A no-op if nothing's pending (`lastOptimizationSnapshot`
+   * is null) — callers should gate the Undo affordance on that being set. */
+  undoLastOptimization: () => Promise<void>;
 }
 
 function currentCartOwner(): string | null {
@@ -28,11 +43,12 @@ function currentCartOwner(): string | null {
 export const useCartStore = create<CartState>((set, get) => ({
   items: [],
   hydrated: false,
+  lastOptimizationSnapshot: null,
 
   hydrate: async () => {
     const owner = currentCartOwner();
     const items = owner ? await cartRepository.loadCart(owner) : [];
-    set({ items, hydrated: true });
+    set({ items, hydrated: true, lastOptimizationSnapshot: null });
   },
 
   addToCart: async (product, qty = 1) => {
@@ -44,7 +60,7 @@ export const useCartStore = create<CartState>((set, get) => ({
       idx >= 0
         ? items.map((i, n) => (n === idx ? { ...i, quantity: i.quantity + qty } : i))
         : [...items, { product, quantity: qty }];
-    set({ items: next });
+    set({ items: next, lastOptimizationSnapshot: null });
     await cartRepository.saveCart(owner, next);
   },
 
@@ -56,22 +72,38 @@ export const useCartStore = create<CartState>((set, get) => ({
       qty <= 0
         ? items.filter((i) => i.product.id !== productId)
         : items.map((i) => (i.product.id === productId ? { ...i, quantity: qty } : i));
-    set({ items: next });
+    set({ items: next, lastOptimizationSnapshot: null });
     await cartRepository.saveCart(owner, next);
   },
 
   remove: async (productId) => {
     const owner = currentCartOwner();
     const next = get().items.filter((i) => i.product.id !== productId);
-    set({ items: next });
+    set({ items: next, lastOptimizationSnapshot: null });
     if (owner) await cartRepository.saveCart(owner, next);
   },
 
   setCart: async (items) => {
     const owner = currentCartOwner();
     if (!owner) return;
-    set({ items });
+    set({ items, lastOptimizationSnapshot: null });
     await cartRepository.saveCart(owner, items);
+  },
+
+  applyOptimizedItems: async (items) => {
+    const owner = currentCartOwner();
+    if (!owner) return;
+    const previous = get().items;
+    set({ items, lastOptimizationSnapshot: previous });
+    await cartRepository.saveCart(owner, items);
+  },
+
+  undoLastOptimization: async () => {
+    const owner = currentCartOwner();
+    const snapshot = get().lastOptimizationSnapshot;
+    if (!owner || snapshot === null) return;
+    set({ items: snapshot, lastOptimizationSnapshot: null });
+    await cartRepository.saveCart(owner, snapshot);
   },
 }));
 

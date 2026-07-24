@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import type { User } from '../types';
-import { userRepository } from '../repositories/userRepository';
-import { authRepository } from '../repositories/authRepository';
+import type { User } from '@/types';
+import { userRepository } from '@/repositories/userRepository';
+import { authRepository } from '@/repositories/authRepository';
 
 /** Direct port of shopsmart_mobile/src/store/userStore.ts. */
 interface UserState {
