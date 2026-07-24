@@ -235,7 +235,7 @@ export default function HomePage() {
             Compare grocery prices, instantly
           </h1>
           <p className="text-[#1A1A1A]/60 text-base sm:text-lg mb-8 max-w-xl mx-auto">
-            Search Trader Joe&apos;s, Sprouts, Kroger &amp; Aldi near you.
+            Search Trader Joe&apos;s, Sprouts, Kroger, Aldi &amp; Albertsons near you.
           </p>
 
           <form
