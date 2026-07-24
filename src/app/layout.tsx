@@ -11,7 +11,7 @@ const manrope = Manrope({ subsets: ['latin'], weight: ['400', '500', '600', '700
 export const metadata: Metadata = {
   title: "ShopSmart — Compare Grocery Prices Instantly",
   description:
-    "Compare prices across Trader Joe's, Sprouts, Kroger, and Aldi in one search.",
+    "Compare prices across Trader Joe's, Sprouts, Kroger, Aldi, and Albertsons in one search.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

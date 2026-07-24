@@ -21,7 +21,6 @@ import {
   buildProductGroups,
   buildCombinedGroup,
   categoryLayerIsMeaningful,
-  countMeaningfulCategories,
   logCategoryAssignment,
   shortenSiblingLabel,
   type ProductGroup,
@@ -185,25 +184,14 @@ export default function HomePage() {
   // in "Search Within One Store" mode, which already skips the category
   // layer entirely on its own terms.
   const categoryLayerWorthShowing = categoryLayerIsMeaningful(multiStoreGroups);
-  // TODO(temporary debug logging): remove once the category-skip bug fix
-  // has been verified in the field — see the categoryLayerIsMeaningful
-  // investigation. Logs the raw group count, how many survive the
-  // dedupe/empty/placeholder filter, and which layer this search lands on.
+  // Per-store category-assignment funnel — see comparisonService's
+  // logCategoryAssignment for what this catches (the "global search shows 0
+  // Kroger products in a category the Kroger-only search clearly has
+  // matches for" bug) — a permanent diagnostic, never gated behind a flag.
   useEffect(() => {
     if (!hasSearched) return;
-    console.log('[CategoryLayer]', {
-      query: activeQuery,
-      rawGroups: groups.length,
-      rawMultiStoreGroups: multiStoreGroups.length,
-      uniqueMeaningfulCategories: countMeaningfulCategories(multiStoreGroups),
-      decision: categoryLayerWorthShowing ? 'show-category-layer' : 'skip-to-comparison',
-    });
-    // Per-store category-assignment funnel — see comparisonService's
-    // logCategoryAssignment for what this catches (the "global search
-    // shows 0 Kroger products in a category the Kroger-only search
-    // clearly has matches for" bug).
     logCategoryAssignment(direct, groups, activeQuery);
-  }, [hasSearched, activeQuery, groups, multiStoreGroups, categoryLayerWorthShowing, direct]);
+  }, [hasSearched, activeQuery, groups, direct]);
   const bypassToComparison = hasSearched && !loading && !error
     && !singleStoreMode && direct.length > 0 && !categoryLayerWorthShowing;
   const combinedGroup = useMemo(
