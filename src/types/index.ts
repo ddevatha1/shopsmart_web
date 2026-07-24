@@ -16,6 +16,15 @@ export interface StoreLocation {
   zip: string;
   latitude?: number;
   longitude?: number;
+  /** Which real, retailer-native source resolved this location (e.g.
+   * 'kroger-api', 'aldi-instacart', 'sprouts-locator', 'traderjoes-sitemap')
+   * — every locator sets this, so it's always traceable which adapter
+   * produced a given address instead of the app just trusting it blindly. */
+  source: string;
+  /** Adapter-specific extras (e.g. a raw facility/location id) that don't
+   * belong in the shared shape but are useful for debugging a specific
+   * retailer's data. Never required by any caller. */
+  metadata?: Record<string, unknown>;
 }
 
 export interface ApiProduct {
@@ -68,6 +77,12 @@ export interface User {
 export interface SearchRequest {
   query: string;
   zipcode: string;
+  /** The shopper's real GPS fix, when the app has it — lets store selection
+   * rank by their actual position instead of only the ZIP's geocoded
+   * centroid (see services/locators/krogerLocator.ts). Optional; omitted
+   * entirely falls back to zip-centroid resolution, same as before. */
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface StoreStatus {

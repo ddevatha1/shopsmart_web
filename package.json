@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --experimental-loader=./scripts/aliasLoader.mjs --test src/services/*.test.ts src/store/*.test.ts"
+    "test": "node --experimental-strip-types --experimental-loader=./scripts/aliasLoader.mjs --test src/services/*.test.ts src/services/locators/*.test.ts src/store/*.test.ts"
   },
   "dependencies": {
     "maplibre-gl": "^5.24.0",

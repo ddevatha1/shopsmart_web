@@ -389,8 +389,8 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                 </div>
               </AccordionSection>
 
-              {product.location && (
-                <AccordionSection title="Store Location" defaultExpanded>
+              <AccordionSection title="Store Location" defaultExpanded>
+                {product.location ? (
                   <div className="flex gap-3 pb-4">
                     <span className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{ backgroundColor: accent.dot }} />
                     <div className="flex-1">
@@ -404,8 +404,21 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                       )}
                     </div>
                   </div>
-                </AccordionSection>
-              )}
+                ) : (
+                  // Never guess an address — if this store's real location
+                  // couldn't be resolved, say so explicitly rather than
+                  // silently hiding the section or showing stale/wrong data.
+                  <div className="flex gap-3 pb-4">
+                    <svg className="w-[18px] h-[18px] text-[#1A1A1A]/40 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a2 2 0 01-2.828 0l-4.243-4.243a8 8 0 1111.314 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <p className="text-[#1A1A1A]/50 text-sm leading-snug flex-1">
+                      Location unavailable for this store right now.
+                    </p>
+                  </div>
+                )}
+              </AccordionSection>
             </div>
           </div>
         </div>

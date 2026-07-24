@@ -10,11 +10,21 @@ import type { SearchResponse } from '../types';
 export class ApiError extends Error {}
 
 export const searchRepository = {
-  async search(query: string, zipcode: string, options?: { noCorrect?: boolean }): Promise<SearchResponse> {
+  async search(
+    query: string,
+    zipcode: string,
+    options?: { noCorrect?: boolean; latitude?: number; longitude?: number },
+  ): Promise<SearchResponse> {
     const res = await fetch('/api/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, zipcode, noCorrect: options?.noCorrect }),
+      body: JSON.stringify({
+        query,
+        zipcode,
+        noCorrect: options?.noCorrect,
+        latitude: options?.latitude,
+        longitude: options?.longitude,
+      }),
     });
     const json = await res.json().catch(() => null);
     if (!res.ok) {

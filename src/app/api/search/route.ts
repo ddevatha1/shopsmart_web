@@ -18,7 +18,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 12;
 
 export async function POST(req: NextRequest) {
-  let body: { query?: string; zipcode?: string; noCorrect?: boolean };
+  let body: { query?: string; zipcode?: string; noCorrect?: boolean; latitude?: number; longitude?: number };
   try {
     body = await req.json();
   } catch {
@@ -36,6 +36,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '`zipcode` must be a 5-digit US zip code.' }, { status: 400 });
   }
 
-  const response = await performSearch(rawQuery, zipcode, { noCorrect: body.noCorrect });
+  const preciseCoords =
+    typeof body.latitude === 'number' && typeof body.longitude === 'number'
+      ? { latitude: body.latitude, longitude: body.longitude }
+      : undefined;
+
+  const response = await performSearch(rawQuery, zipcode, { noCorrect: body.noCorrect, preciseCoords });
   return NextResponse.json(response);
 }

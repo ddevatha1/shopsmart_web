@@ -114,6 +114,8 @@ export function createSproutsLocator(getSessionCookie: () => Promise<string>): S
           zip: addr.postal_code,
           latitude: coords?.latitude,
           longitude: coords?.longitude,
+          source: 'sprouts-locator',
+          metadata: { shopId: nearest.id, storeNumber: nearest.location_code },
         };
 
         locationCache.set(zip, location);

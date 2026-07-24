@@ -24,6 +24,7 @@ import { TtlCache } from '@/utils/ttlCache';
 import { dedupeInFlight } from '@/utils/dedupeInFlight';
 import { devLog } from '@/utils/devLog';
 import { createTraderJoesLocator, warmDirectory as warmTraderJoesDirectory } from '@/services/locators/traderJoesLocator';
+import type { PreciseCoords } from '@/services/locators/types';
 
 const TJ_GRAPHQL_URL = 'https://www.traderjoes.com/api/graphql';
 const COOKIE_FETCH_TIMEOUT_MS = 8000;
@@ -212,8 +213,9 @@ async function getCookieHeader(forceRefresh = false): Promise<string> {
 export async function searchTraderJoes(
   query: string,
   zip: string,
+  preciseCoords?: PreciseCoords,
 ): Promise<ApiProduct[]> {
-  const storeLocation = await traderJoesLocator.findNearestStore(zip);
+  const storeLocation = await traderJoesLocator.findNearestStore(zip, preciseCoords);
   if (!storeLocation?.storeId) {
     devLog(`[TraderJoes] No Trader Joe's location found near ${zip}`);
     return [];
@@ -294,8 +296,9 @@ export function searchTraderJoesWithTimeout(
   query: string,
   zip: string,
   timeoutMs: number,
+  preciseCoords?: PreciseCoords,
 ): Promise<ApiProduct[]> {
-  return withTimeout(searchTraderJoes(query, zip), timeoutMs, "Trader Joe's search");
+  return withTimeout(searchTraderJoes(query, zip, preciseCoords), timeoutMs, "Trader Joe's search");
 }
 
 // ── Warm-up ────────────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@ import { searchAldiWithTimeout } from '@/services/aldiLiveScraper';
 import { correctQuery, logQueryCorrection } from '@/services/queryCorrection';
 import { perfLog } from '@/utils/perfLog';
 import { devLog } from '@/utils/devLog';
+import type { PreciseCoords } from '@/services/locators/types';
 
 type StoreName = ApiProduct['store'];
 
@@ -583,7 +584,7 @@ function timedStoreSearch<T>(store: string, promise: Promise<T>): Promise<T> {
 export async function performSearch(
   rawQuery: string,
   zipcode: string,
-  options?: { noCorrect?: boolean },
+  options?: { noCorrect?: boolean; preciseCoords?: PreciseCoords },
 ): Promise<SearchResponse> {
   const requestStart = Date.now();
   perfLog('search:request-start', { query: rawQuery, zipcode });
@@ -612,10 +613,11 @@ export async function performSearch(
   // in-process browser launch. Kept comfortably under the search route's
   // `maxDuration` so Vercel's own function timeout is never what kills a
   // slow store.
+  const preciseCoords = options?.preciseCoords;
   const [traderJoesResult, sproutsResult, krogerResult, aldiResult] = await Promise.allSettled([
-    timedStoreSearch("Trader Joe's", searchTraderJoesWithTimeout(query, zipcode, 8_000)),
+    timedStoreSearch("Trader Joe's", searchTraderJoesWithTimeout(query, zipcode, 8_000, preciseCoords)),
     timedStoreSearch('Sprouts', searchSproutsWithTimeout(query, zipcode, 8_000)),
-    timedStoreSearch('Kroger', searchKrogerWithTimeout(query, zipcode, 8_000)),
+    timedStoreSearch('Kroger', searchKrogerWithTimeout(query, zipcode, 8_000, preciseCoords)),
     timedStoreSearch('Aldi', searchAldiWithTimeout(query, zipcode, 8_000)),
   ]);
 
