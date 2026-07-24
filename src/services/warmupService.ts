@@ -19,6 +19,7 @@ import { warmKroger } from '@/services/krogerLiveScraper';
 import { warmAldi } from '@/services/aldiLiveScraper';
 import { warmSprouts } from '@/services/sproutsLiveScraper';
 import { warmTraderJoes } from '@/services/traderJoesLiveScraper';
+import { warmAlbertsonsDirectory } from '@/services/locators/albertsonsLocator';
 import { perfLog } from '@/utils/perfLog';
 
 export interface WarmupStoreResult {
@@ -75,6 +76,10 @@ function buildTasks(zipcode?: string): WarmupTask[] {
     { store: 'Sprouts', run: () => warmSprouts(zipcode) },
     { store: 'Kroger', run: () => warmKroger(zipcode) },
     { store: 'Aldi', run: () => warmAldi(zipcode) },
+    // No product session to warm (see albertsonsLiveScraper.ts) — this only
+    // pre-fetches the real store-location directory so the first search
+    // that touches Albertsons isn't slowed by it.
+    { store: 'Albertsons', run: () => warmAlbertsonsDirectory() },
   ];
 }
 

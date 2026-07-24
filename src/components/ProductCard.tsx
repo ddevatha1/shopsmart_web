@@ -27,6 +27,7 @@ const STORE_STYLE: Record<ApiProduct['store'], { bg: string; text: string }> = {
   Sprouts: { bg: 'bg-emerald-100', text: 'text-emerald-700' },
   Kroger: { bg: 'bg-sky-100', text: 'text-sky-700' },
   Aldi: { bg: 'bg-cyan-100', text: 'text-cyan-700' },
+  Albertsons: { bg: 'bg-violet-100', text: 'text-violet-700' },
 };
 // Dictionary-driven category icon, generated from the product name — see
 // src/utils/groceryFallbackImage.ts for the keyword → graphic mapping. Used

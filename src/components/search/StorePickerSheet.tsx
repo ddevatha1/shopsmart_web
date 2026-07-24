@@ -1,6 +1,6 @@
 'use client';
 
-import { STORE_NAMES, type StoreName } from '@/types';
+import { STORE_NAMES, UNAVAILABLE_STORES, type StoreName } from '@/types';
 import { storeAccents } from '@/theme/colors';
 
 interface Props {
@@ -26,12 +26,16 @@ export default function StorePickerSheet({ isOpen, onClose, onSelect }: Props) {
         <div className="flex flex-col gap-2">
           {STORE_NAMES.map(store => {
             const accent = storeAccents[store];
+            const unavailable = UNAVAILABLE_STORES.has(store);
             return (
               <button
                 key={store}
                 type="button"
-                onClick={() => onSelect(store)}
-                className="flex items-center gap-3 p-3 rounded-2xl border border-gray-100 hover:bg-gray-50 transition-colors text-left"
+                onClick={() => { if (!unavailable) onSelect(store); }}
+                disabled={unavailable}
+                className={`flex items-center gap-3 p-3 rounded-2xl border border-gray-100 transition-colors text-left ${
+                  unavailable ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50'
+                }`}
               >
                 <span
                   className="w-9 h-9 rounded-xl flex items-center justify-center text-xs font-extrabold shrink-0"
@@ -39,7 +43,12 @@ export default function StorePickerSheet({ isOpen, onClose, onSelect }: Props) {
                 >
                   {store.slice(0, 2).toUpperCase()}
                 </span>
-                <span className="text-[#1A1A1A] font-semibold text-sm">{store}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-[#1A1A1A] font-semibold text-sm">{store}</span>
+                  {unavailable && (
+                    <span className="block text-[#1A1A1A]/50 text-xs mt-0.5">Temporarily unavailable</span>
+                  )}
+                </span>
               </button>
             );
           })}

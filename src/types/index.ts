@@ -1,5 +1,12 @@
-export const STORE_NAMES = ["Trader Joe's", 'Sprouts', 'Kroger', 'Aldi'] as const;
+export const STORE_NAMES = ["Trader Joe's", 'Sprouts', 'Kroger', 'Aldi', 'Albertsons'] as const;
 export type StoreName = (typeof STORE_NAMES)[number];
+
+/** Stores with no live product data source yet (see
+ * services/albertsonsLiveScraper.ts for why) — mirrors
+ * services/searchService.ts's own UNAVAILABLE_STORES exactly, so the UI can
+ * label these clearly instead of letting a shopper pick one and just see
+ * zero results with no explanation. */
+export const UNAVAILABLE_STORES: ReadonlySet<StoreName> = new Set(['Albertsons']);
 
 /** The specific physical store a product listing came from — standardized
  * across all four store adapters (see krogerLiveScraper.ts,
@@ -42,7 +49,7 @@ export interface ApiProduct {
   upc?: string;
   certifications?: string[];
   pricePerUnit?: string;
-  store: "Trader Joe's" | 'Sprouts' | 'Kroger' | 'Aldi';
+  store: "Trader Joe's" | 'Sprouts' | 'Kroger' | 'Aldi' | 'Albertsons';
   storeProductUrl?: string;
   location?: StoreLocation;
   inStock?: boolean;
@@ -87,7 +94,12 @@ export interface SearchRequest {
 
 export interface StoreStatus {
   store: ApiProduct['store'];
-  status: 'pending' | 'loading' | 'success' | 'error';
+  /** 'unavailable' is distinct from 'error': it means this store has no
+   * live data source at all right now (see services/albertsonsLiveScraper.ts)
+   * — an expected, permanent-for-now state, not something that broke. The
+   * UI should show it calmly ("temporarily unavailable"), not as a red
+   * error. */
+  status: 'pending' | 'loading' | 'success' | 'error' | 'unavailable';
   count?: number;
   error?: string;
 }

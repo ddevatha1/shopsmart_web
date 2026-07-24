@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { ApiProduct, STORE_NAMES } from '@/types';
+import { ApiProduct, STORE_NAMES, UNAVAILABLE_STORES } from '@/types';
 import ProductCard from '@/components/ProductCard';
 import ProductGroupCard from '@/components/ProductGroupCard';
 import AppHeader from '@/components/AppHeader';
@@ -332,14 +332,14 @@ export default function HomePage() {
         {!hasSearched && (
           <div className="text-center py-16">
             <div className="flex justify-center gap-2 mb-4">
-              {(selectedStore ? [selectedStore] : STORE_NAMES).map(s => (
+              {(selectedStore ? [selectedStore] : STORE_NAMES.filter(s => !UNAVAILABLE_STORES.has(s))).map(s => (
                 <span key={s} className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: storeAccents[s].dot }} />
               ))}
             </div>
             <p className="text-[#1A1A1A]/50 text-sm">
               {selectedStore
                 ? `Enter a product above to browse ${selectedStore}'s inventory.`
-                : 'Enter a product above to compare prices across all four stores near you.'}
+                : 'Enter a product above to compare prices across nearby stores.'}
             </p>
             {recentSearches.length === 0 && (
               <div className="flex flex-wrap items-center justify-center gap-2 mt-4">

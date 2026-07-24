@@ -17,6 +17,7 @@ import { searchSproutsWithTimeout } from '@/services/sproutsLiveScraper';
 import { searchKrogerWithTimeout } from '@/services/krogerLiveScraper';
 import { searchTraderJoesWithTimeout } from '@/services/traderJoesLiveScraper';
 import { searchAldiWithTimeout } from '@/services/aldiLiveScraper';
+import { searchAlbertsonsWithTimeout } from '@/services/albertsonsLiveScraper';
 import { correctQuery, logQueryCorrection } from '@/services/queryCorrection';
 import { perfLog } from '@/utils/perfLog';
 import { devLog } from '@/utils/devLog';
@@ -24,7 +25,11 @@ import type { PreciseCoords } from '@/services/locators/types';
 
 type StoreName = ApiProduct['store'];
 
-const ALL_STORES: StoreName[] = ["Trader Joe's", 'Sprouts', 'Kroger', 'Aldi'];
+const ALL_STORES: StoreName[] = ["Trader Joe's", 'Sprouts', 'Kroger', 'Aldi', 'Albertsons'];
+// Stores with no live data source at all right now (see
+// albertsonsLiveScraper.ts) — their empty result is an expected
+// 'unavailable' state, never counted or displayed as an 'error'.
+const UNAVAILABLE_STORES = new Set<StoreName>(['Albertsons']);
 
 // ─── Relevance scoring ───────────────────────────────────────────────────
 // Words that don't define what a product IS — strip these when ranking.
@@ -604,8 +609,9 @@ export async function performSearch(
   const query = correction.level === 'none' ? correction.normalized : correction.corrected;
 
   // Run the live Trader Joe's scraper, live Sprouts scraper, live Kroger API,
-  // and live Aldi API in parallel.
-  // Total latency = max(traderJoesTime, sproutsTime, krogerTime, aldiTime).
+  // live Aldi API, and Albertsons (always-empty, see albertsonsLiveScraper.ts)
+  // in parallel.
+  // Total latency = max(traderJoesTime, sproutsTime, krogerTime, aldiTime, albertsonsTime).
   // Every store is now a plain HTTP call from this route's perspective —
   // Trader Joe's fetches a pre-warmed cookie from the scraper-service
   // (see traderJoesLiveScraper.ts) instead of launching a browser itself,
@@ -614,11 +620,12 @@ export async function performSearch(
   // `maxDuration` so Vercel's own function timeout is never what kills a
   // slow store.
   const preciseCoords = options?.preciseCoords;
-  const [traderJoesResult, sproutsResult, krogerResult, aldiResult] = await Promise.allSettled([
+  const [traderJoesResult, sproutsResult, krogerResult, aldiResult, albertsonsResult] = await Promise.allSettled([
     timedStoreSearch("Trader Joe's", searchTraderJoesWithTimeout(query, zipcode, 8_000, preciseCoords)),
     timedStoreSearch('Sprouts', searchSproutsWithTimeout(query, zipcode, 8_000)),
     timedStoreSearch('Kroger', searchKrogerWithTimeout(query, zipcode, 8_000, preciseCoords)),
     timedStoreSearch('Aldi', searchAldiWithTimeout(query, zipcode, 8_000)),
+    timedStoreSearch('Albertsons', searchAlbertsonsWithTimeout(query, zipcode, 8_000, preciseCoords)), // no live product source yet — always resolves empty, see albertsonsLiveScraper.ts
   ]);
 
   const aggregateStart = Date.now();
@@ -685,9 +692,18 @@ export async function performSearch(
   collectStoreResult('Sprouts', sproutsResult, query);
   collectStoreResult('Kroger', krogerResult, query);
   collectStoreResult('Aldi', aldiResult, query);
+  collectStoreResult('Albertsons', albertsonsResult, query);
 
   const storeStatuses: StoreStatus[] = ALL_STORES.map(store => {
     const products = storeMap.get(store) ?? [];
+    if (products.length === 0 && UNAVAILABLE_STORES.has(store)) {
+      return {
+        store,
+        status: 'unavailable',
+        count: 0,
+        error: "Live pricing isn't available for this store yet.",
+      };
+    }
     return {
       store,
       status: products.length > 0 ? 'success' : 'error',

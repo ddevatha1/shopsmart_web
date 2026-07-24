@@ -25,6 +25,7 @@ const STORE_ACCENT: Record<ApiProduct['store'], string> = {
   Sprouts: 'bg-emerald-100 text-emerald-700',
   Kroger: 'bg-sky-100 text-sky-700',
   Aldi: 'bg-cyan-100 text-cyan-700',
+  Albertsons: 'bg-violet-100 text-violet-700',
 };
 
 function formatMinutes(min: number): string {
